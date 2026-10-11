@@ -277,8 +277,25 @@
   <span class="status">สถานะ <span id="status-pill"><span class="pill draft">ร่าง ยังไม่เผยแพร่</span></span>
     <button class="ghost" id="goto-issues" type="button" data-admin-only hidden style="padding:.2rem .7rem;margin-left:.4rem;color:var(--alert);border-color:var(--alert)">⚠ ดูข้อผิดกฎ</button>
     <button class="primary" id="publish-top" data-admin-only style="padding:.2rem .7rem;margin-left:.5rem">เผยแพร่ตาราง</button>
-    <span class="rolepill admin" id="role-pill">Admin</span> <button class="ghost" id="logout" style="padding:.15rem .6rem;margin-left:.4rem">ออกจากระบบ</button></span>
+    <span class="rolepill admin" id="role-pill">Admin</span>
+    <button class="ghost" id="change-pass-btn" type="button" style="padding:.15rem .6rem;margin-left:.4rem">เปลี่ยนรหัสผ่าน</button>
+    <button class="ghost" id="logout" style="padding:.15rem .6rem;margin-left:.4rem">ออกจากระบบ</button></span>
 </header>
+
+<!-- กล่องเปลี่ยนรหัสผ่าน (ซ่อนไว้ เปิดจากปุ่มบนหัวตาราง) -->
+<div id="change-pass-overlay" hidden style="position:fixed;inset:0;background:rgba(10,20,40,.55);display:grid;place-items:center;z-index:200;padding:1rem">
+  <div class="panel" style="max-width:380px;width:100%">
+    <h2 style="margin:0 0 .6rem">เปลี่ยนรหัสผ่าน</h2>
+    <p class="hint" style="margin:0 0 .6rem">ตั้งรหัสผ่านใหม่สำหรับบัญชีที่ล็อกอินอยู่ (อย่างน้อย 6 ตัวอักษร)</p>
+    <div class="field"><label for="cp-new">รหัสผ่านใหม่</label><input id="cp-new" type="password" autocomplete="new-password" style="width:100%"></div>
+    <div class="field"><label for="cp-confirm">ยืนยันรหัสผ่านใหม่</label><input id="cp-confirm" type="password" autocomplete="new-password" style="width:100%"></div>
+    <p id="cp-msg" class="hint" style="margin:.2rem 0 .6rem;min-height:1.1em"></p>
+    <div style="display:flex;gap:.5rem;justify-content:flex-end">
+      <button class="ghost" type="button" id="cp-cancel">ยกเลิก</button>
+      <button class="primary" type="button" id="cp-submit">บันทึกรหัสใหม่</button>
+    </div>
+  </div>
+</div>
 
 <nav class="steps" role="tablist" aria-label="ขั้นตอนการจัดเวรประจำเดือน">
   <button role="tab" id="t-req" aria-controls="p-req" aria-selected="false"><span class="n">1</span>คำขอเวร</button>
@@ -412,8 +429,8 @@
       </div>
 
       <div class="panel">
-        <h2 style="margin-bottom:.2rem">ปฏิทินวันหยุด <span class="rule hard">O-1a</span></h2>
-        <p class="hint" style="margin:0 0 .75rem">ดึงจาก Google Calendar วันหยุดไทย เมื่อ 8 ต.ค. 2569 08:02 · <button class="ghost" type="button" style="padding:.15rem .6rem" id="cal-refresh">ดึงใหม่</button> คลิกวันที่เพื่อเพิ่มหรือเอาวันหยุดออก <span class="rule hard">O-1b</span></p>
+        <h2 style="margin-bottom:.2rem">ปฏิทินวันหยุด — <span id="cal-month-label">—</span> <span class="rule hard">O-1a</span></h2>
+        <p class="hint" style="margin:0 0 .75rem">ปฏิทินของ <b>เดือนที่กำลังจัดเวร</b> (เปลี่ยนเดือนด้านบน แล้วปฏิทินนี้จะอัปเดตตาม) · คลิกวันที่เพื่อเพิ่มหรือเอาวันหยุดนักขัตฤกษ์ออก <span class="rule hard">O-1b</span></p>
         <div class="cal" id="cal"></div>
       </div>
 
@@ -686,6 +703,7 @@
       <div class="field"><label for="st-name">ชื่อ</label><input id="st-name" type="text" style="width:100%"></div>
       <div class="field"><label for="st-prof">ประเภท staff</label><select id="st-prof"><option value="RN">RN (พยาบาลวิชาชีพ)</option><option value="PN">PN (ผู้ช่วยพยาบาล)</option><option value="Clerk">Clerk (ธุรการ/เลขา)</option><option value="Sup">Sup (ผู้ตรวจการ)</option></select></div>
       <div class="field"><label for="st-level">ระดับ</label><select id="st-level"><option>Expert</option><option>Competent</option><option selected>Novice</option><option>Training</option></select></div>
+      <div class="field"><label for="st-maxnight">เพดานเวรดึกต่อเดือน (รายบุคคล)</label><input id="st-maxnight" type="number" min="0" step="1" placeholder="ว่าง = ไม่จำกัด" style="width:100%"><span class="hint">เช่น ธัญชนก = 2, ชวนพิศ = 4 · เว้นว่างถ้าไม่จำกัด</span></div>
       <div class="field">
         <span style="display:block;font-weight:500;margin-bottom:.2rem">เวรที่ขึ้นได้</span>
         <label style="display:inline;font-weight:400"><input type="checkbox" class="st-slot" value="ช" checked> เช้า</label>
@@ -1330,6 +1348,23 @@ function checkNight(sched, out, passed) {
             })
           );
         }
+      }
+    }
+
+    // N-6 (HARD): เพดานเวรดึกต่อเดือน รายบุคคล (เฉพาะเวรดึกในเดือนนี้ ไม่รวมเดือนก่อน)
+    const cap = s.maxNightsPerMonth;
+    if (cap != null && Number.isFinite(cap)) {
+      let nights = 0;
+      for (let d = 1; d <= calendar.days; d++) {
+        if (hasSlot(codeAt(sched, s.name, d), "ด")) nights++;
+      }
+      if (nights > cap) {
+        out.push(
+          V("N-6", "HARD", `${s.name} ขึ้นเวรดึก ${nights} เวรในเดือนนี้ เกินเพดานรายบุคคล ${cap} เวร`, {
+            day: 1,
+            who: s.name,
+          })
+        );
       }
     }
   }
@@ -2717,6 +2752,14 @@ const STAFF_MGMT_TYPES = ["RN", "PN", "Clerk", "Sup"]; // ประเภท sta
 // Clerk/Sup โดยปริยายขึ้นได้ทุกเวร เช่นเดียวกับ RN/PN
 const ALL_SLOTS = ["ช", "บ", "ด"];
 
+// แปลงค่าเพดานเวรดึก/เดือน → จำนวนเต็ม ≥ 0 หรือ null (= ไม่จำกัด)
+function normalizeMaxNights(v) {
+  if (v === "" || v == null) return null;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return Math.floor(n);
+}
+
 function normalizeId(id, existing) {
   let s = String(id || "").trim();
   if (!s) {
@@ -2752,6 +2795,8 @@ function addStaff(staff, input) {
     level,
     availableForSlotType: avail,
     canBeIncharge: input.canBeIncharge ?? (level === "Expert" || level === "Competent"),
+    // เพดานเวรดึกต่อเดือน (รายบุคคล) — null/undefined = ไม่จำกัด  [N-6]
+    maxNightsPerMonth: normalizeMaxNights(input.maxNightsPerMonth),
   };
   return [...staff, newStaff];
 }
@@ -2793,7 +2838,10 @@ function updateStaff(staff, name, patch) {
   if (patch.profession && !PROFESSIONS.includes(patch.profession)) throw new Error(`profession ไม่ถูกต้อง`);
   // ถ้าเปลี่ยน type ให้ sync profession ด้วย (เพื่อ backward compat)
   const sync = patch.type ? { profession: patch.type } : {};
-  return staff.map((s) => (s === found ? { ...s, ...sync, ...patch } : s));
+  const nightPatch = "maxNightsPerMonth" in patch
+    ? { maxNightsPerMonth: normalizeMaxNights(patch.maxNightsPerMonth) }
+    : {};
+  return staff.map((s) => (s === found ? { ...s, ...sync, ...patch, ...nightPatch } : s));
 }
 
 /**
@@ -3315,8 +3363,26 @@ function autoAssign(sched, opts = {}) {
         else break;
       }
       if (streak >= (config.maxNightStreak ?? 3)) return false;
+      // N-6: เพดานเวรดึกต่อเดือนรายบุคคล
+      if (!withinNightCap(s, d)) return false;
     }
     return true;
+  }
+
+  // นับเวรดึกที่จัดให้คนนี้ไปแล้วในเดือนนี้ (ไม่รวมวัน d)
+  function nightsSoFar(name, exceptDay) {
+    let n = 0;
+    for (let k = 1; k <= days; k++) {
+      if (k === exceptDay) continue;
+      if (hasSym(grid[name][k - 1], "ด")) n++;
+    }
+    return n;
+  }
+  // true ถ้าเพิ่มเวรดึกวัน d ให้ s ได้โดยไม่เกินเพดานรายบุคคล
+  function withinNightCap(s, d) {
+    const cap = s.maxNightsPerMonth;
+    if (cap == null || !Number.isFinite(cap)) return true;
+    return nightsSoFar(s.name, d) < cap;
   }
 
   const unfilled = [];
@@ -3417,6 +3483,8 @@ function autoAssign(sched, opts = {}) {
       if (sym === "ด") {
         const tomo = d < days ? grid[name][d] : "";
         if (hasSym(tomo, "ช")) return false;
+        // N-6: เพดานเวรดึกต่อเดือนรายบุคคล (OT/ควบ ก็นับเป็นเวรดึก)
+        if (!withinNightCap(s, d)) return false;
       }
       // ไม่เพิ่มเวรให้คนที่ขอหยุด/ลา วันนั้น
       const rq = reqIdx.get(`${name}|${d}`);
@@ -3679,6 +3747,16 @@ class SupabaseAdapter {
   async signOut() {
     await this.sb.auth.signOut();
     this._profile = null;
+  }
+
+  // เปลี่ยนรหัสผ่านของ user ที่ล็อกอินอยู่ (ต้องมี session)
+  async changePassword(newPassword) {
+    if (!newPassword || String(newPassword).length < 6) {
+      throw new Error("รหัสผ่านใหม่อย่างน้อย 6 ตัวอักษร");
+    }
+    const { error } = await this.sb.auth.updateUser({ password: newPassword });
+    if (error) throw new Error(error.message);
+    return { ok: true };
   }
 
   // self-signup: สมัครด้วย email+password → ผูกเข้าหน่วยด้วย join_code (role=staff)
@@ -3961,6 +4039,51 @@ const parseMK = (mk) => { const [y, m] = mk.split("-").map(Number); return { yea
 const daysInMK = (mk) => { const { year, month } = parseMK(mk); return new Date(year, month + 1, 0).getDate(); };
 const mkLabelFull = (mk) => { const { year, month } = parseMK(mk); return `${TH_MON_FULL[month]} ${year + 543}`; };
 
+// วันหยุดนักขัตฤกษ์ไทย (วันที่คงที่ + วันพระใหญ่ที่ทราบล่วงหน้า) ตาราง YYYY-MM-DD → ชื่อ
+// admin แก้ไข/เพิ่ม/ลบ รายเดือนได้เองจากปฏิทิน (คลิกวันที่) — ตารางนี้เป็นค่าตั้งต้นให้เท่านั้น
+const TH_HOLIDAYS = {
+  // 2026
+  "2026-01-01": "วันขึ้นปีใหม่",
+  "2026-03-03": "วันมาฆบูชา",
+  "2026-04-06": "วันจักรี",
+  "2026-04-13": "วันสงกรานต์",
+  "2026-04-14": "วันสงกรานต์",
+  "2026-04-15": "วันสงกรานต์",
+  "2026-05-01": "วันแรงงาน",
+  "2026-05-04": "วันฉัตรมงคล",
+  "2026-05-31": "วันวิสาขบูชา",
+  "2026-06-03": "วันเฉลิมฯ พระราชินี",
+  "2026-07-28": "วันเฉลิมฯ ร.10",
+  "2026-07-29": "วันอาสาฬหบูชา",
+  "2026-07-30": "วันเข้าพรรษา",
+  "2026-08-12": "วันแม่แห่งชาติ",
+  "2026-10-13": "วันคล้ายวันสวรรคต ร.9",
+  "2026-10-23": "วันปิยมหาราช",
+  "2026-12-05": "วันพ่อแห่งชาติ",
+  "2026-12-10": "วันรัฐธรรมนูญ",
+  "2026-12-31": "วันสิ้นปี",
+  // 2027
+  "2027-01-01": "วันขึ้นปีใหม่",
+  "2027-04-06": "วันจักรี",
+  "2027-04-13": "วันสงกรานต์",
+  "2027-04-14": "วันสงกรานต์",
+  "2027-04-15": "วันสงกรานต์",
+  "2027-05-01": "วันแรงงาน",
+  "2027-10-23": "วันปิยมหาราช",
+  "2027-12-05": "วันพ่อแห่งชาติ",
+  "2027-12-10": "วันรัฐธรรมนูญ",
+  "2027-12-31": "วันสิ้นปี",
+};
+// คืน { day → ชื่อวันหยุด } ของเดือน mk จากตาราง TH_HOLIDAYS
+function defaultHolidaysFor(mk) {
+  const out = {};
+  const prefix = mk + "-"; // "YYYY-MM-"
+  for (const date of Object.keys(TH_HOLIDAYS)) {
+    if (date.startsWith(prefix)) out[Number(date.slice(-2))] = TH_HOLIDAYS[date];
+  }
+  return out;
+}
+
 // สร้าง state เดือนใหม่ถ้ายังไม่มี (grid = off ทั้งเดือนสำหรับทุก staff)
 function ensureMonth(mk) {
   if (MONTHS[mk]) return MONTHS[mk];
@@ -3970,7 +4093,7 @@ function ensureMonth(mk) {
   for (const s of STAFF) grid[s.name] = Array(days).fill("off");
   MONTHS[mk] = {
     year, month, days,
-    holidays: mk === "2026-03" ? { 3: "วันมาฆบูชา" } : {},
+    holidays: defaultHolidaysFor(mk), // วันหยุดนักขัตฤกษ์ตามเดือนจริง (ไม่ค้างเดือนเดิม)
     grid, baseline: null, published: false, swapLog: [], seeded: false,
   };
   return MONTHS[mk];
@@ -4009,6 +4132,9 @@ function activateMonth(mk, { rerender = true } = {}) {
   if (rerender && typeof renderGrid === "function") {
     updateEditButtons(); renderGrid(); renderIssues(); renderSummary(); renderRequests();
     renderSwapLegs(); renderSwapLog();
+    // อัปเดตปฏิทินวันหยุด + ความเป็นไปได้ ให้ตรงกับเดือนที่เพิ่งสลับมา (fix: ปฏิทินค้างเดือนเดิม)
+    if (typeof renderCal === "function") renderCal();
+    if (typeof renderFeas === "function") renderFeas();
     const sm = document.getElementById("sched-month"); if (sm) sm.value = mk;
     const hdr = document.querySelector(".masthead h1"); if (hdr) hdr.textContent = `ตารางเวร ${mkLabelFull(mk)}`;
   }
@@ -4052,6 +4178,7 @@ function buildSchedule() {
   const staff = STAFF.map(s => ({
     id: s.id, name: s.name, type: s.prof || "RN", profession: s.prof || "RN", level: LVL_FULL[s.lvl],
     availableForSlotType: s.avail, canBeIncharge: s.lvl === "E",
+    maxNightsPerMonth: s.maxNightsPerMonth ?? null,
   }));
   const calendar = RulesEngine.makeCalendar({ year: YEAR, month: MONTH, days: DAYS, holidays: HOLIDAYS });
   // last_month ข้ามเดือน (N-2) — ใช้เฉพาะมีนาคม (มีข้อมูลตัวอย่าง) เดือนอื่นเริ่มใหม่
@@ -4778,7 +4905,9 @@ function restoreReq() {
 function renderCal() {
   let h = DOW.map(x => `<div class="h">${x}</div>`).join("");
   for (let i = 0; i < dow(1); i++) h += `<div style="background:none"></div>`;
-  for (let d = 1; d <= DAYS; d++) h += `<div role="button" tabindex="0" data-d="${d}" class="${HOLIDAYS[d] ? "hol" : isWE(d) ? "we" : ""}" aria-pressed="${!!HOLIDAYS[d]}" aria-label="${d} มีนาคม ${HOLIDAYS[d] ? "วันหยุด " + HOLIDAYS[d] : ""}">${d}${HOLIDAYS[d] ? `<small>${HOLIDAYS[d]}</small>` : ""}</div>`;
+  const _lbl = document.getElementById("cal-month-label");
+  if (_lbl) _lbl.textContent = `${TH_MON_FULL[MONTH]} ${YEAR + 543}`;
+  for (let d = 1; d <= DAYS; d++) h += `<div role="button" tabindex="0" data-d="${d}" class="${HOLIDAYS[d] ? "hol" : isWE(d) ? "we" : ""}" aria-pressed="${!!HOLIDAYS[d]}" aria-label="${d} ${TH_MON_FULL[MONTH]} ${HOLIDAYS[d] ? "วันหยุด " + HOLIDAYS[d] : ""}">${d}${HOLIDAYS[d] ? `<small>${HOLIDAYS[d]}</small>` : ""}</div>`;
   const cal = document.getElementById("cal"); cal.innerHTML = h;
   cal.querySelectorAll("[data-d]").forEach(el => {
     const toggle = () => { const d = +el.dataset.d; if (isWE(d)) return;
@@ -5169,13 +5298,15 @@ function runHistory() {
 /* ---------------- staff management ---------------- */
 function renderStaffTable() {
   const LVLN = { Expert: "Expert", Competent: "Competent", Novice: "Novice", Training: "Training" };
-  let h = `<thead><tr><th>id</th><th>ชื่อ</th><th>ประเภท</th><th>ระดับ</th><th>เวรที่ขึ้นได้</th><th>Incharge</th><th></th></tr></thead><tbody>`;
+  let h = `<thead><tr><th>id</th><th>ชื่อ</th><th>ประเภท</th><th>ระดับ</th><th>เวรที่ขึ้นได้</th><th title="เพดานเวรดึกต่อเดือน รายบุคคล — ว่าง = ไม่จำกัด">ดึก/เดือน</th><th>Incharge</th><th></th></tr></thead><tbody>`;
   h += STAFF.map(s => {
     const full = { E: "Expert", C: "Competent", N: "Novice" }[s.lvl] || s.lvl;
     const levelSel = ["Expert","Competent","Novice","Training"].map(l => `<option ${l===full?"selected":""}>${l}</option>`).join("");
+    const capVal = (s.maxNightsPerMonth ?? "") === "" ? "" : s.maxNightsPerMonth;
     return `<tr><td>${s.id}</td><td>${s.name}</td><td>${s.prof||"RN"}</td>
       <td><select data-name="${s.name}" class="st-lvl-edit" style="padding:.2rem">${levelSel}</select></td>
       <td class="hint">${s.avail.join(" ")}</td>
+      <td><input type="number" min="0" step="1" class="st-night-edit" data-name="${s.name}" value="${capVal}" placeholder="∞" style="width:3.4rem;padding:.2rem" title="เพดานเวรดึก/เดือน (ว่าง = ไม่จำกัด)"></td>
       <td>${s.canBeIncharge?"✓":""}</td>
       <td><button class="ghost st-del" data-name="${s.name}" style="padding:.1rem .5rem;color:var(--alert)">ลบ</button></td></tr>`;
   }).join("");
@@ -5189,6 +5320,17 @@ function renderStaffTable() {
       syncStaffFromEngine(eng);
       toast(`ปรับระดับ ${name} เป็น ${level}`);
       renderStaffTable(); renderGrid(); renderIssues(); renderSummary();
+    } catch (e) { toast(e.message); }
+  }));
+  // bind edit เพดานเวรดึก/เดือน (รายบุคคล)
+  document.querySelectorAll(".st-night-edit").forEach(inp => inp.addEventListener("change", () => {
+    const name = inp.dataset.name;
+    const raw = inp.value.trim();
+    try {
+      const eng = RulesEngine.updateStaff(engineStaff(), name, { maxNightsPerMonth: raw === "" ? null : Number(raw) });
+      syncStaffFromEngine(eng);
+      toast(raw === "" ? `${name}: เวรดึกไม่จำกัด/เดือน` : `${name}: เวรดึกไม่เกิน ${Number(raw)} เวร/เดือน`);
+      renderIssues(); renderSummary();
     } catch (e) { toast(e.message); }
   }));
   document.querySelectorAll(".st-del").forEach(b => b.addEventListener("click", () => {
@@ -5206,11 +5348,11 @@ function renderStaffTable() {
 // STAFF (mockup shape lvl=E/C/N) ↔ engine staff (level เต็ม)
 const LVL_SHORT = { Expert: "E", Competent: "C", Novice: "N", Training: "T" };
 function engineStaff() {
-  return STAFF.map(s => ({ id: s.id, name: s.name, type: s.prof || "RN", profession: s.prof || "RN", level: { E:"Expert",C:"Competent",N:"Novice",T:"Training" }[s.lvl], availableForSlotType: s.avail, canBeIncharge: s.canBeIncharge ?? (s.lvl === "E" || s.lvl === "C") }));
+  return STAFF.map(s => ({ id: s.id, name: s.name, type: s.prof || "RN", profession: s.prof || "RN", level: { E:"Expert",C:"Competent",N:"Novice",T:"Training" }[s.lvl], availableForSlotType: s.avail, canBeIncharge: s.canBeIncharge ?? (s.lvl === "E" || s.lvl === "C"), maxNightsPerMonth: s.maxNightsPerMonth ?? null }));
 }
 function syncStaffFromEngine(eng) {
   STAFF.length = 0;
-  eng.forEach(e => STAFF.push({ id: e.id, name: e.name, prof: e.type || e.profession, lvl: LVL_SHORT[e.level] || "N", avail: e.availableForSlotType, canBeIncharge: e.canBeIncharge }));
+  eng.forEach(e => STAFF.push({ id: e.id, name: e.name, prof: e.type || e.profession, lvl: LVL_SHORT[e.level] || "N", avail: e.availableForSlotType, canBeIncharge: e.canBeIncharge, maxNightsPerMonth: e.maxNightsPerMonth ?? null }));
   // คนใหม่ที่ยังไม่มีแถวใน GRID → เติม off ทั้งเดือน
   STAFF.forEach(s => { if (!GRID[s.name]) GRID[s.name] = Array(DAYS).fill("off"); });
   STORE = RulesEngine.makeMonthStore(buildSchedule());
@@ -5223,10 +5365,12 @@ document.getElementById("staff-form").addEventListener("submit", e => {
   const prof = document.getElementById("st-prof").value;
   const level = document.getElementById("st-level").value;
   const avail = [...document.querySelectorAll(".st-slot:checked")].map(c => c.value);
+  const maxNightRaw = document.getElementById("st-maxnight").value.trim();
   try {
-    const eng = RulesEngine.addStaff(engineStaff(), { name, type: prof, profession: prof, level, availableForSlotType: avail });
+    const eng = RulesEngine.addStaff(engineStaff(), { name, type: prof, profession: prof, level, availableForSlotType: avail, maxNightsPerMonth: maxNightRaw === "" ? null : Number(maxNightRaw) });
     syncStaffFromEngine(eng);
     document.getElementById("st-name").value = "";
+    document.getElementById("st-maxnight").value = "";
     toast(`เพิ่ม ${name} (${prof}/${level}) แล้ว`);
     renderStaffTable(); renderGrid(); renderIssues(); renderSummary();
   } catch (err) { toast(err.message); }
@@ -5255,10 +5399,12 @@ const ADAPTER = (typeof localStorage !== "undefined")
 function persist() {
   try { RulesEngine.persistStore(ADAPTER, STORE); } catch (e) { /* demo: เงียบ */ }
   // ถ้า login cloud และเป็น admin → บันทึกขึ้น Supabase อัตโนมัติ (fire-and-forget)
+  // ใช้ ACTIVE_MK (เดือนที่กำลังจัด) ไม่ fix เป็น 2026-03 อีกต่อไป — แก้บั๊ก "คีย์ข้อมูลแล้วไม่บันทึก"
   try {
     if (typeof SB_ADAPTER !== "undefined" && SB_ADAPTER && CURRENT_ROLE === "admin") {
       const data = RulesEngine.serializeMonth(STORE); data.staff = STORE.sched.staff;
-      SB_ADAPTER.saveMonth("2026-03", data).catch(() => {});
+      data.holidays = HOLIDAYS; data.year = YEAR; data.month = MONTH; data.days = DAYS;
+      SB_ADAPTER.saveMonth(ACTIVE_MK, data).catch(() => {});
     }
   } catch (e) {}
 }
@@ -5457,24 +5603,102 @@ document.getElementById("login-form").addEventListener("submit", async e=>{
 // โหลดข้อมูลเดือนปัจจุบันของหน่วยจาก Supabase → GRID/STORE
 async function loadFromCloud() {
   if (!SB_ADAPTER) return;
-  const data = await SB_ADAPTER.loadMonth("2026-03");
-  if (data && data.grid) {
-    for (const name of Object.keys(data.grid)) GRID[name] = data.grid[name].slice();
-    if (data.staff) { STAFF.length=0; data.staff.forEach(e=>STAFF.push({id:e.id,name:e.name,prof:e.profession,lvl:LVL_SHORT[e.level]||"N",avail:e.availableForSlotType,canBeIncharge:e.canBeIncharge})); }
-    STORE = RulesEngine.makeMonthStore(buildSchedule());
-    if (data.baseline) STORE.baseline = data.baseline;
-    HISTORY = RulesEngine.addMonth(RulesEngine.makeHistoryStore(), STORE);
-    renderGrid(); renderIssues(); renderRequests(); renderSummary(); renderStaffTable(); renderAssignments();
+  // 1) เคลียร์ข้อมูล demo ออกก่อน เพื่อไม่ให้ค้างทับข้อมูลจริงของหน่วย
+  clearDemoState();
+  // 2) โหลดทุกเดือนของหน่วยจาก cloud
+  let all = {};
+  try { all = await SB_ADAPTER.loadAll(); } catch (e) { all = {}; }
+  const monthKeys = Object.keys(all).sort();
+
+  // sync STAFF จากข้อมูลเดือนล่าสุดที่มี staff (ถ้ามี)
+  let staffSrc = null;
+  for (const mk of monthKeys) { if (all[mk] && all[mk].staff && all[mk].staff.length) staffSrc = all[mk].staff; }
+  if (staffSrc) {
+    STAFF.length = 0;
+    staffSrc.forEach(e => STAFF.push({
+      id: e.id, name: e.name, prof: e.profession || e.type || "RN",
+      lvl: LVL_SHORT[e.level] || "N", avail: e.availableForSlotType,
+      canBeIncharge: e.canBeIncharge, maxNightsPerMonth: e.maxNightsPerMonth ?? null,
+    }));
   }
+
+  // สร้าง MONTHS จากข้อมูล cloud
+  for (const mk of monthKeys) {
+    const d = all[mk]; if (!d || !d.grid) continue;
+    const { year, month } = parseMK(mk);
+    const days = d.days || daysInMK(mk);
+    const grid = {};
+    for (const s of STAFF) grid[s.name] = (d.grid[s.name] || Array(days).fill("off")).slice();
+    for (const name of Object.keys(d.grid)) if (!grid[name]) grid[name] = d.grid[name].slice();
+    MONTHS[mk] = {
+      year, month, days,
+      holidays: d.holidays || defaultHolidaysFor(mk),
+      grid, baseline: d.baseline || null, published: Boolean(d.published),
+      swapLog: d.swapLog || [], seeded: true,
+    };
+  }
+
+  // 3) ตั้งเดือนที่แสดง: เดือนแรกที่มีข้อมูล หรือเดือนปัจจุบันจริงถ้ายังว่าง
+  const now = new Date();
+  const curMK = mkOf(now.getFullYear(), now.getMonth());
+  const target = monthKeys[0] || curMK;
+  ensureMonth(target);
+  renderMonthSelector();
+  activateMonth(target, { rerender: true });
+  renderStaffTable(); renderAssignments();
+  if (monthKeys.length === 0) {
+    toast("ยังไม่มีข้อมูลเดือนใดในหน่วยนี้ — เริ่มจัดเวรเดือนปัจจุบันได้เลย");
+  }
+}
+
+// ล้างข้อมูล demo ทั้งหมด (staff/grid/คำขอ/วันหยุด/เดือน) ก่อนโหลดข้อมูลจริงของหน่วย
+function clearDemoState() {
+  STAFF.length = 0;
+  for (const k of Object.keys(GRID)) delete GRID[k];
+  for (const k of Object.keys(HOLIDAYS)) delete HOLIDAYS[k];
+  for (const k of Object.keys(MONTHS)) delete MONTHS[k];
+  if (typeof OFF_REQ !== "undefined") OFF_REQ.length = 0;
+  if (typeof WORK_REQ !== "undefined") WORK_REQ.length = 0;
+  if (typeof REQUESTS !== "undefined" && Array.isArray(REQUESTS)) REQUESTS.length = 0;
+  if (typeof ASSIGNMENTS !== "undefined" && Array.isArray(ASSIGNMENTS)) ASSIGNMENTS.length = 0;
+  // ล้าง localStorage ที่ค้าง demo (ของเดือน 2026-03 เดิม) เพื่อไม่ให้ restore() ดึงกลับมา
+  try {
+    if (typeof localStorage !== "undefined") {
+      const kill = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        // ลบคีย์ข้อมูล demo แต่คงค่า config การเชื่อมต่อ (sb-url/sb-key/gs-*)
+        if (k && k.startsWith("nurse:") &&
+            (k.startsWith("nurse:month") || k.startsWith("nurse:swap") ||
+             k === "nurse:staff" || k === "nurse:requests" ||
+             k === "nurse:assignments" || k === "nurse:catalog")) {
+          kill.push(k);
+        }
+      }
+      kill.forEach(k => { try { localStorage.removeItem(k); } catch (e) {} });
+    }
+  } catch (e) {}
 }
 
 // บันทึกขึ้น cloud (สำหรับ admin) — ปุ่ม Backup เดิมเรียกอันนี้ด้วยถ้าเชื่อม cloud
 async function saveToCloud() {
   if (!SB_ADAPTER) return false;
-  persist();
-  const data = RulesEngine.serializeMonth(STORE);
-  data.staff = STORE.sched.staff;
-  await SB_ADAPTER.saveMonth("2026-03", data);
+  // เขียน state ของเดือนที่ active กลับ registry ก่อน แล้วบันทึกทุกเดือนที่มีข้อมูล
+  if (typeof saveActiveMonth === "function") saveActiveMonth();
+  const staffArr = (STORE && STORE.sched) ? STORE.sched.staff : null;
+  for (const mk of Object.keys(MONTHS)) {
+    const st = MONTHS[mk];
+    if (!st || !st.grid) continue;
+    const data = {
+      grid: st.grid,
+      baseline: st.baseline || null,
+      swapLog: st.swapLog || [],
+      holidays: st.holidays || {},
+      year: st.year, month: st.month, days: st.days,
+      staff: staffArr,
+    };
+    await SB_ADAPTER.saveMonth(mk, data);
+  }
   return true;
 }
 
@@ -5495,6 +5719,33 @@ document.getElementById("logout").addEventListener("click", async ()=>{
   try { if (SB_ADAPTER) await SB_ADAPTER.signOut(); } catch(e){}
   document.body.classList.remove("authed");
   lgMsg("");
+});
+
+// ---------- เปลี่ยนรหัสผ่าน (ตนเอง) ----------
+function cpMsg(msg, kind){ const el=document.getElementById("cp-msg"); if(!el)return; el.textContent=msg; el.style.color = kind==="bad"?"var(--alert)":kind==="ok"?"var(--ok)":""; }
+function openChangePass(){ cpMsg(""); const n=document.getElementById("cp-new"), c=document.getElementById("cp-confirm"); if(n)n.value=""; if(c)c.value=""; document.getElementById("change-pass-overlay").hidden=false; if(n)n.focus(); }
+function closeChangePass(){ document.getElementById("change-pass-overlay").hidden=true; }
+document.getElementById("change-pass-btn")?.addEventListener("click", ()=>{
+  if (!SB_ADAPTER) { toast("โหมด demo ไม่มีรหัสผ่าน — เข้าสู่ระบบ cloud เพื่อเปลี่ยนรหัส"); return; }
+  openChangePass();
+});
+document.getElementById("cp-cancel")?.addEventListener("click", closeChangePass);
+document.getElementById("change-pass-overlay")?.addEventListener("click", e=>{ if(e.target.id==="change-pass-overlay") closeChangePass(); });
+document.getElementById("cp-submit")?.addEventListener("click", async ()=>{
+  const np = document.getElementById("cp-new").value;
+  const cf = document.getElementById("cp-confirm").value;
+  if (!SB_ADAPTER) { cpMsg("ต้องเข้าสู่ระบบ cloud ก่อน", "bad"); return; }
+  if (!np || np.length < 6) { cpMsg("รหัสผ่านใหม่อย่างน้อย 6 ตัวอักษร", "bad"); return; }
+  if (np !== cf) { cpMsg("รหัสผ่านใหม่กับยืนยันไม่ตรงกัน", "bad"); return; }
+  const btn = document.getElementById("cp-submit"); btn.disabled = true;
+  cpMsg("กำลังบันทึก...");
+  try {
+    await SB_ADAPTER.changePassword(np);
+    cpMsg("เปลี่ยนรหัสผ่านสำเร็จ ✓", "ok");
+    toast("เปลี่ยนรหัสผ่านเรียบร้อย ใช้รหัสใหม่ครั้งถัดไป");
+    setTimeout(closeChangePass, 1200);
+  } catch(err){ cpMsg("ไม่สำเร็จ: " + err.message, "bad"); }
+  finally { btn.disabled = false; }
 });
 
 /* ---------------- init ---------------- */
