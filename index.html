@@ -3957,8 +3957,8 @@ let HOLIDAYS = { 3: "วันมาฆบูชา" }; // from Google Calendar 
 const dow = d => new Date(YEAR, MONTH, d).getDay();
 const isWE = d => dow(d) === 0 || dow(d) === 6;
 const workingDays = () => { let n = 0; for (let d = 1; d <= DAYS; d++) if (!isWE(d) && !HOLIDAYS[d]) n++; return n; };
-const parts = code => code.split("+");
-const lvlOf = name => STAFF.find(s => s.name === name).lvl;
+const parts = code => (code ? String(code).split("+") : []);
+const lvlOf = name => { const s = STAFF.find(s => s.name === name); return s ? s.lvl : "N"; };
 const TH_MON = ["ม.ค.","ก.พ.","มี.ค.","เม.ย.","พ.ค.","มิ.ย.","ก.ค.","ส.ค.","ก.ย.","ต.ค.","พ.ย.","ธ.ค."];
 const TH_MON_FULL = ["มกราคม","กุมภาพันธ์","มีนาคม","เมษายน","พฤษภาคม","มิถุนายน","กรกฎาคม","สิงหาคม","กันยายน","ตุลาคม","พฤศจิกายน","ธันวาคม"];
 const thDate = d => `${d} ${TH_MON[MONTH]}`;
@@ -5622,14 +5622,20 @@ async function loadFromCloud() {
     }));
   }
 
+  // ทำให้ row เวรยาวเท่า days เสมอ (เติม "off" ช่องที่ขาด/ว่าง) กัน cell undefined → .split พัง
+  const normalizeRow = (row, days) => {
+    const out = Array(days).fill("off");
+    if (Array.isArray(row)) for (let i = 0; i < days; i++) out[i] = (row[i] == null || row[i] === "") ? "off" : row[i];
+    return out;
+  };
   // สร้าง MONTHS จากข้อมูล cloud
   for (const mk of monthKeys) {
     const d = all[mk]; if (!d || !d.grid) continue;
     const { year, month } = parseMK(mk);
     const days = d.days || daysInMK(mk);
     const grid = {};
-    for (const s of STAFF) grid[s.name] = (d.grid[s.name] || Array(days).fill("off")).slice();
-    for (const name of Object.keys(d.grid)) if (!grid[name]) grid[name] = d.grid[name].slice();
+    for (const s of STAFF) grid[s.name] = normalizeRow(d.grid[s.name], days);
+    for (const name of Object.keys(d.grid)) if (!grid[name]) grid[name] = normalizeRow(d.grid[name], days);
     MONTHS[mk] = {
       year, month, days,
       holidays: d.holidays || defaultHolidaysFor(mk),
