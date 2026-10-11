@@ -5591,10 +5591,12 @@ document.getElementById("login-form").addEventListener("submit", async e=>{
     CURRENT_UNIT = profile.units || { code: "?", name: "หน่วยของฉัน" };
     applyRole(profile.role === "admin" ? "admin" : "user");
     document.querySelector(".masthead .unit").textContent = `${CURRENT_UNIT.name} · ${profile.full_name||email}`;
-    await loadFromCloud();
+    // เข้าสู่โปรแกรมก่อน แล้วค่อยโหลดข้อมูล — ถ้าโหลด/วาดพลาด จะไม่ค้างอยู่หน้า login
     document.body.classList.add("authed");
     lgMsg("");
     toast(`ยินดีต้อนรับ ${profile.full_name||email}`);
+    try { await loadFromCloud(); }
+    catch(e2) { console.error("loadFromCloud error:", e2); toast("โหลดข้อมูลหน่วยไม่สำเร็จ: " + e2.message); }
   } catch(err) {
     lgMsg("เข้าสู่ระบบไม่สำเร็จ: " + err.message, "bad");
   } finally { document.getElementById("lg-submit").disabled=false; }
@@ -5649,9 +5651,10 @@ async function loadFromCloud() {
   const curMK = mkOf(now.getFullYear(), now.getMonth());
   const target = monthKeys[0] || curMK;
   ensureMonth(target);
-  renderMonthSelector();
-  activateMonth(target, { rerender: true });
-  renderStaffTable(); renderAssignments();
+  try { renderMonthSelector(); } catch (e) { console.error(e); }
+  try { activateMonth(target, { rerender: true }); } catch (e) { console.error("activateMonth:", e); }
+  try { renderStaffTable(); } catch (e) { console.error(e); }
+  try { renderAssignments(); } catch (e) { console.error(e); }
   if (monthKeys.length === 0) {
     toast("ยังไม่มีข้อมูลเดือนใดในหน่วยนี้ — เริ่มจัดเวรเดือนปัจจุบันได้เลย");
   }
