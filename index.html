@@ -283,7 +283,7 @@
 </header>
 
 <!-- กล่องเปลี่ยนรหัสผ่าน (ซ่อนไว้ เปิดจากปุ่มบนหัวตาราง) -->
-<div id="change-pass-overlay" hidden style="position:fixed;inset:0;background:rgba(10,20,40,.55);display:grid;place-items:center;z-index:200;padding:1rem">
+<div id="change-pass-overlay" style="display:none;position:fixed;inset:0;background:rgba(10,20,40,.55);place-items:center;z-index:200;padding:1rem">
   <div class="panel" style="max-width:380px;width:100%">
     <h2 style="margin:0 0 .6rem">เปลี่ยนรหัสผ่าน</h2>
     <p class="hint" style="margin:0 0 .6rem">ตั้งรหัสผ่านใหม่สำหรับบัญชีที่ล็อกอินอยู่ (อย่างน้อย 6 ตัวอักษร)</p>
@@ -5729,8 +5729,8 @@ document.getElementById("logout").addEventListener("click", async ()=>{
 
 // ---------- เปลี่ยนรหัสผ่าน (ตนเอง) ----------
 function cpMsg(msg, kind){ const el=document.getElementById("cp-msg"); if(!el)return; el.textContent=msg; el.style.color = kind==="bad"?"var(--alert)":kind==="ok"?"var(--ok)":""; }
-function openChangePass(){ cpMsg(""); const n=document.getElementById("cp-new"), c=document.getElementById("cp-confirm"); if(n)n.value=""; if(c)c.value=""; document.getElementById("change-pass-overlay").hidden=false; if(n)n.focus(); }
-function closeChangePass(){ document.getElementById("change-pass-overlay").hidden=true; }
+function openChangePass(){ cpMsg(""); const n=document.getElementById("cp-new"), c=document.getElementById("cp-confirm"); if(n)n.value=""; if(c)c.value=""; document.getElementById("change-pass-overlay").style.display="grid"; if(n)n.focus(); }
+function closeChangePass(){ document.getElementById("change-pass-overlay").style.display="none"; }
 document.getElementById("change-pass-btn")?.addEventListener("click", ()=>{
   if (!SB_ADAPTER) { toast("โหมด demo ไม่มีรหัสผ่าน — เข้าสู่ระบบ cloud เพื่อเปลี่ยนรหัส"); return; }
   openChangePass();
