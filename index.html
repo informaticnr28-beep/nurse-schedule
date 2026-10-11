@@ -4945,7 +4945,7 @@ document.getElementById("cfg-type")?.addEventListener("change", (e) => {
   document.getElementById(id)?.addEventListener("input", () => {
     const sel = document.getElementById("slot-preset"); if (sel) sel.value = "custom";
   }));
-document.getElementById("cal-refresh").addEventListener("click", () => toast("ดึงปฏิทินจาก Google แล้ว พบวันหยุด 1 วันในเดือนนี้"));
+document.getElementById("cal-refresh")?.addEventListener("click", () => toast("ดึงปฏิทินจาก Google แล้ว พบวันหยุด 1 วันในเดือนนี้"));
 
 /* ---------------- activities (placeholder catalogue, 13.1 #11) ---------------- */
 /* ---------------- assignments (มอบหมายงาน) ---------------- */
