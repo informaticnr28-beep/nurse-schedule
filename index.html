@@ -3628,72 +3628,84 @@ function autoAssign(sched, opts = {}) {
       grid[name][d - 1] = list.join("+");
     };
 
-    // ----- STEP A: ตัดวันทำงานส่วนเกินให้ทุกคนมีวันหยุดครบ targetOff -----
-    //   คนที่ off น้อยกว่าเป้าหมาย (ทำงานหลายวันเกินไป) → ปลดวันทำงานออกเป็น off
-    //   โดยถ้าปลดแล้วเวรนั้นจะขาด ให้ "ควบ" ให้คนอื่นที่ทำงานวันเดียวกันมารับแทน (คงกำลังคน)
-    const offDaysOf = (name) => {
+    // ----- STEP A: เติมเวรให้ทุกคนทำงานครบ workQuota วัน (วันหยุดเหลือ = targetOff) -----
+    //   สาเหตุเดิม: main loop หยุดเมื่อแต่ละเวรครบ need → ถ้าคนเยอะกว่าความต้องการ
+    //   แต่ละคนได้เวรไม่ถึงโควตา → หยุดเกิน · พาสนี้ "เติม" ให้แต่ละคนครบโควตาวันทำงาน
+    //   โดยลงเวรเดี่ยวในวันที่ยัง off (เคารพกฎพัก/คำขอ) · ส่วนที่เกิน need จะถูกแปลงเป็น OT ใน STEP C
+    const workDaysOfA = (name) => {
       let n = 0;
-      for (let k = 1; k <= days; k++) if (isDayOff(name, k)) n++;
+      for (let k = 1; k <= days; k++) if (partsOf(grid[name][k - 1]).some((p) => CLIN.includes(p))) n++;
       return n;
     };
-    const targetOff = calendar.targetOff ?? (days - workQuota);
-    // พยายามหาคนมา "ควบ" รับเวร sym วัน d แทนคนที่กำลังจะถูกปลด (คืน true ถ้าทำได้)
-    const coverByDoubling = (dayD, sym, excludeName) => {
-      const cand = pool
-        .filter((s) => s.name !== excludeName)
-        .filter((s) => {
-          const t = grid[s.name][dayD - 1];
-          return t && t !== "off" && clinCount(t) >= 1 && canAddShift(s, dayD, sym);
-        })
-        .sort((a, b) => load.get(a.name) - load.get(b.name));
-      if (!cand.length) return false;
-      addPart(cand[0].name, dayD, sym);
-      load.set(cand[0].name, load.get(cand[0].name) + 1);
+    // ลงเวรเดี่ยววัน d ให้คน s ได้ไหม (วันนั้นต้องว่าง/off + เคารพกฎพัก + ไม่ขอหยุด/ลา/อบรม)
+    //   ไม่ใช้ canAddShift (ซึ่งคุมเฉพาะการ "ควบ") — เพราะพาสนี้ลงเวรเดี่ยวบนวันว่าง
+    const canPlaceSingle = (s, d, sym) => {
+      const name = s.name;
+      if (!(s.availableForSlotType || CLIN).includes(sym)) return false;
+      if (!isDayOff(name, d)) return false; // ต้องเป็นวันว่าง
+      const rq = reqIdx.get(`${name}|${d}`);
+      if (rq && (rq.off || rq.vacation)) return false;
+      // N-2: ดึกเมื่อวาน → ห้ามเช้าวันนี้ ; ดึกวันนี้ → ห้ามเช้าพรุ่งนี้
+      const yest = d >= 2 ? grid[name][d - 2] : lastMonthCode(sched, name, 0);
+      if (sym === "ช" && hasSym(yest, "ด")) return false;
+      // ข้อ 2: ควบเวรเมื่อวาน → วันนี้ห้ามขึ้นเช้า
+      if (sym === "ช" && isDoubleDay(name, d - 1)) return false;
+      if (sym === "ด") {
+        const tomo = d < days ? grid[name][d] : "";
+        if (hasSym(tomo, "ช")) return false;
+        // กันดึกติดกันเกิน + เพดานดึกรายบุคคล
+        let ns = 0;
+        for (let k = d - 1; k >= 1 && hasSym(grid[name][k - 1], "ด"); k--) ns++;
+        if (ns >= (config.maxNightStreak ?? 3)) return false;
+        if (!withinNightCap(s, d)) return false;
+      }
+      // O-6: ไม่ทำให้ทำงานติดกันเกิน maxConsecutiveWorkDays วัน
+      const isWorkDay = (k) => k >= 1 && k <= days &&
+        partsOf(grid[name][k - 1]).some((p) => CLIN.includes(p) || ["a","b1","b2"].includes(p));
+      let streak = 1;
+      for (let k = d - 1; k >= 1 && isWorkDay(k); k--) streak++;
+      for (let k = d + 1; k <= days && isWorkDay(k); k++) streak++;
+      if (streak > (config.maxConsecutiveWorkDays ?? 7)) return false;
       return true;
     };
-    (function trimToTargetOff() {
+    (function fillToWorkQuota() {
       let guard = pool.length * days + 10;
       let progressed = true;
       while (progressed && guard-- > 0) {
         progressed = false;
-        // คนที่วันหยุดยังขาด เรียงจากขาดมากสุด
-        const over = pool
-          .map((s) => ({ s, deficit: targetOff - offDaysOf(s.name) }))
+        // คนที่ยังทำงานไม่ครบโควตา เรียงจากขาดมากสุด (คนขึ้นเวรได้น้อยชนิดก่อน)
+        const under = pool
+          .map((s) => ({ s, deficit: workQuota - workDaysOfA(s.name) }))
           .filter((x) => x.deficit > 0)
-          .sort((a, b) => b.deficit - a.deficit);
-        for (const { s } of over) {
-          const name = s.name;
-          // วันทำงานที่เป็น "เวรเดี่ยว clinical" (ไม่ควบ ไม่ OT ไม่อบรม) — ปลดง่ายสุด
-          const singleDays = [];
-          for (let d = 1; d <= days; d++) {
-            const code = grid[name][d - 1];
-            const ps = partsOf(code);
-            if (ps.length === 1 && CLIN.includes(ps[0])) singleDays.push({ d, sym: ps[0] });
-          }
-          if (!singleDays.length) continue;
-          // เลือกปลดวันที่เวรนั้น "เกินความต้องการ" ก่อน (ปลดได้โดยไม่ต้องควบ)
-          singleDays.sort((a, b) => {
-            const surA = coverageCount(a.d, a.sym) - (staffPerShift[a.sym] || 0);
-            const surB = coverageCount(b.d, b.sym) - (staffPerShift[b.sym] || 0);
-            return surB - surA;
+          .sort((a, b) => {
+            if (b.deficit !== a.deficit) return b.deficit - a.deficit;
+            const ca = (a.s.availableForSlotType || CLIN).filter((x) => CLIN.includes(x)).length;
+            const cb = (b.s.availableForSlotType || CLIN).filter((x) => CLIN.includes(x)).length;
+            return ca - cb;
           });
-          let done = false;
-          for (const { d, sym } of singleDays) {
-            const surplus = coverageCount(d, sym) - (staffPerShift[sym] || 0);
-            if (surplus > 0) {
-              // ปลดได้เลย ยังเหลือกำลังคนพอ
-              grid[name][d - 1] = "off";
-              load.set(name, Math.max(0, (load.get(name) || 0) - 1));
-              progressed = true; done = true; break;
-            }
-            // ไม่เกิน → ลองหาคนมาควบแทน แล้วค่อยปลด
-            if (coverByDoubling(d, sym, name)) {
-              grid[name][d - 1] = "off";
-              load.set(name, Math.max(0, (load.get(name) || 0) - 1));
-              progressed = true; done = true; break;
+        for (const { s } of under) {
+          const name = s.name;
+          const avail = (s.availableForSlotType || CLIN).filter((x) => CLIN.includes(x));
+          // รายการวันว่าง
+          const offDays = [];
+          for (let d = 1; d <= days; d++) if (isDayOff(name, d)) offDays.push(d);
+          // เลือกวัน+เวรที่ "ยังขาดกำลังคนมากสุด" ก่อน (ช่วย coverage ไปในตัว) แล้วค่อยที่ไหนก็ได้
+          let best = null, bestScore = -Infinity;
+          for (const d of offDays) {
+            for (const sym of avail) {
+              if (!canPlaceSingle(s, d, sym)) continue;
+              const deficitCov = (staffPerShift[sym] || 0) - coverageCount(d, sym);
+              // ให้ความสำคัญเวรที่ยังขาด (deficitCov > 0) + ยึดดึกก่อนเล็กน้อย
+              const score = (deficitCov > 0 ? 100 : 0) + deficitCov + (sym === "ด" ? 1 : 0);
+              if (score > bestScore) { bestScore = score; best = { d, sym }; }
             }
           }
-          if (done) break; // คำนวณใหม่รอบถัดไป (coverage เปลี่ยน)
+          if (best) {
+            grid[name][best.d - 1] = best.sym;
+            load.set(name, (load.get(name) || 0) + 1);
+            progressed = true;
+            break; // คำนวณใหม่ (coverage/quota เปลี่ยน)
+          }
         }
       }
     })();
