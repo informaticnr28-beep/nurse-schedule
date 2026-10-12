@@ -2736,7 +2736,7 @@ function toSummaryCSV(sched, current, baseline = null, opts = {}) {
   const { rows } = summarize(sched, current, baseline);
   const header = [
     "ชื่อ", "ประเภท", "ระดับ",
-    "เช้า", "บ่าย", "ดึก", "รวมเวรปกติ",
+    "เช้า", "บ่าย", "ดึก", "รวมเวรปกติ", "วันหยุด",
     "OTช", "OTบ", "OTด",
     "Vacation", "อบรม-a", "อบรม-b1", "อบรม-b2",
     "เวรเกิน", "เวรขาด",
@@ -2746,7 +2746,7 @@ function toSummaryCSV(sched, current, baseline = null, opts = {}) {
     if (!names.has(r.name)) continue;
     lines.push([
       r.name, r.type, r.level,
-      r.morning, r.afternoon, r.night, r.regular,
+      r.morning, r.afternoon, r.night, r.regular, r.off,
       r.otMorning, r.otAfternoon, r.otNight,
       r.vacation, r.trainA, r.trainB1, r.trainB2,
       r.over, r.short,
@@ -5247,7 +5247,7 @@ function renderSummary() {
   const am = avg("morning"), aa = avg("afternoon");
   document.getElementById("sum-table").innerHTML =
     `<thead><tr><th>ชื่อ</th><th>ประเภท</th><th>สัดส่วนเวร</th><th class="num">เช้า</th><th class="num">บ่าย</th><th class="num">ดึก</th>
-     <th class="num">รวมเวรปกติ</th><th class="num">OTช</th><th class="num">OTบ</th><th class="num">OTด</th><th class="num">Vacation</th><th class="num">อบรม a/b1/b2</th><th class="num">เวรเกิน</th><th class="num">เวรขาด</th></tr></thead><tbody>` +
+     <th class="num">รวมเวรปกติ</th><th class="num" title="จำนวนวันหยุด (off) ของเดือนนี้ — ควรเท่ากับวันหยุดเป้าหมาย ${targetOff}">วันหยุด</th><th class="num">OTช</th><th class="num">OTบ</th><th class="num">OTด</th><th class="num">Vacation</th><th class="num">อบรม a/b1/b2</th><th class="num">เวรเกิน</th><th class="num">เวรขาด</th></tr></thead><tbody>` +
     rows.map(r => {
       const tot = (r.clinical || 0) || 1;
       const devM = Math.abs(r.morning - am) > 3, devA = Math.abs(r.afternoon - aa) > 3;
@@ -5257,6 +5257,7 @@ function renderSummary() {
         <td><span class="bar" aria-hidden="true"><span style="width:${r.morning/tot*100}%;background:var(--morning)"></span><span style="width:${r.afternoon/tot*100}%;background:var(--afternoon)"></span><span style="width:${r.night/tot*100}%;background:var(--night)"></span></span></td>
         <td class="num ${devM ? "dev" : ""}">${r.morning}</td><td class="num ${devA ? "dev" : ""}">${r.afternoon}</td><td class="num">${r.night}${avail.includes("ด") ? "" : " <span class='hint'>ไม่ขึ้นดึก</span>"}</td>
         <td class="num">${r.regular}</td>
+        <td class="num ${r.off === targetOff ? "ot-pos" : "dev"}" title="${r.off === targetOff ? "ครบตามเป้าหมาย" : "ไม่ตรงเป้าหมาย " + targetOff + " วัน"}">${r.off}</td>
         <td class="num ${r.otMorning ? "ot-pos" : ""}">${r.otMorning || ""}</td><td class="num ${r.otAfternoon ? "ot-pos" : ""}">${r.otAfternoon || ""}</td><td class="num ${r.otNight ? "ot-pos" : ""}">${r.otNight || ""}</td>
         <td class="num">${r.vacation || ""}</td><td class="num">${[r.trainA, r.trainB1, r.trainB2].map(x => x || "–").join("/")}</td>
         <td class="num ${r.over ? "ot-pos" : ""}">${r.over || ""}</td><td class="num ${r.short ? "dev" : ""}">${r.short || ""}</td></tr>`;
