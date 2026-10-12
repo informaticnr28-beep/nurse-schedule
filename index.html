@@ -354,19 +354,25 @@
       </div>
       <div class="field">
         <span id="rq-type-l" style="display:block;font-weight:500;margin-bottom:.2rem">ประเภท</span>
-        <div class="seg" role="group" aria-labelledby="rq-type-l">
+        <div class="seg" role="group" aria-labelledby="rq-type-l" style="flex-wrap:wrap">
           <button type="button" aria-pressed="true" data-t="off">ขอหยุด</button>
           <button type="button" aria-pressed="false" data-t="work">ขอทำงาน</button>
           <button type="button" aria-pressed="false" data-t="vacation">ลาพักผ่อน</button>
+          <button type="button" aria-pressed="false" data-t="sick">ลาป่วย</button>
+          <button type="button" aria-pressed="false" data-t="personal">ลากิจ</button>
+          <button type="button" aria-pressed="false" data-t="maternity">ลาคลอด</button>
+          <button type="button" aria-pressed="false" data-t="trainFull">อบรมทั้งวัน</button>
+          <button type="button" aria-pressed="false" data-t="trainAM">อบรมเช้า</button>
+          <button type="button" aria-pressed="false" data-t="trainPM">อบรมบ่าย</button>
         </div>
       </div>
       <div class="field" style="display:flex;gap:.6rem">
         <div style="flex:1"><label for="rq-from">ตั้งแต่วันที่</label>
-          <input id="rq-from" type="number" min="1" max="31" value="14" style="width:100%"></div>
+          <input id="rq-from" type="date" style="width:100%"></div>
         <div style="flex:1"><label for="rq-to">ถึงวันที่</label>
-          <input id="rq-to" type="number" min="1" max="31" value="14" style="width:100%"></div>
+          <input id="rq-to" type="date" style="width:100%"></div>
       </div>
-      <div class="hint" style="margin:-.5rem 0 .9rem">ขอติดกันหลายวันได้ (ตั้งวันเริ่ม = วันสิ้นสุด เพื่อขอวันเดียว)</div>
+      <div class="hint" style="margin:-.5rem 0 .9rem">เลือกจากปฏิทิน · ขอติดกันหลายวันได้ (ตั้งวันเริ่ม = วันสิ้นสุด เพื่อขอวันเดียว) · วันที่ต้องอยู่ในเดือนที่ขอ</div>
       <div class="field" id="rq-slot-f" hidden>
         <label for="rq-slot">เวร</label>
         <select id="rq-slot"></select>
@@ -738,9 +744,14 @@ const RulesEngine = (() => {
 // เวรผสมใช้ `+` คั่น เช่น `ช+ด`, `ช+บ`, `b1+บ`
 const CLINICAL = ["ช", "บ", "ด"]; // นับเป็นกำลังคนบนหอ (เวรปกติ)
 const TRAINING = ["a", "b1", "b2"]; // Assigned Task / อบรม
+// ลา (ไม่ใช่เวรปฏิบัติงาน ไม่นับกำลังคน): V=ลาพักผ่อน ป=ลาป่วย ก=ลากิจ ค=ลาคลอด
+const LEAVE = ["V", "ป", "ก", "ค"];
+const LEAVE_TH = { V: "ลาพักผ่อน", "ป": "ลาป่วย", "ก": "ลากิจ", "ค": "ลาคลอด" };
 const SLOT_EN = { ช: "Morning", บ: "Afternoon", ด: "Night" };
 const EN_SLOT = { Morning: "ช", Afternoon: "บ", Night: "ด" };
 const SLOT_TH = { ช: "เช้า", บ: "บ่าย", ด: "ดึก" };
+// true ถ้า code เป็นการลา (ชนิดใดก็ได้)
+const isLeave = (code) => LEAVE.includes(code);
 
 // ---------------------------------------------------------------------------
 // OT (เวรขึ้นเพิ่ม / จ้างทดแทนอัตรากำลังที่ขาด)
@@ -1221,7 +1232,7 @@ function checkHours(sched, out) {
       for (const p of parts(codeAt(sched, s.name, d))) {
         if (CLINICAL.includes(p)) clinical++;
         else if (TRAINING.includes(p)) training++;
-        else if (p === "V") vac++;
+        else if (LEAVE.includes(p)) vac++;
       }
     }
     // W-7: ขั้นต่ำ 14 เวร/เดือน (เวรจริง + อบรม + ลา)  [Q5]
@@ -1453,7 +1464,7 @@ function checkOff(sched, out, passed) {
     for (const item of seq) {
       const code = item.code;
       streakOff = isOff(code) ? streakOff + 1 : 0;
-      streakOffVac = isOff(code) || code === "V" ? streakOffVac + 1 : 0;
+      streakOffVac = isOff(code) || isLeave(code) ? streakOffVac + 1 : 0;
       if (item.inMonth && streakOff > config.maxConsecutiveOff) {
         o3fail++;
         out.push(
@@ -1585,12 +1596,15 @@ function checkFairness(sched, out) {
 function checkRequests(sched, out) {
   const { offRequests, workRequests, vacations, trainings } = sched;
 
-  // R-5: คำขอที่ไม่ได้ตามขอ ต้องทำเครื่องหมาย not-as-request
+  // R-5: คำขอหยุด/ลา/อบรม ถือว่าได้ตามขอ ถ้าวันนั้น "ไม่ได้ขึ้นเวรปฏิบัติงาน (clinical)"
+  //   = เป็น off หรือ ลา (V/ป/ก/ค) หรือ อบรม (a/b1/b2) — ไม่ใช่เฉพาะ off ล้วน
+  const isHonoredAbsence = (code) =>
+    isOff(code) || isLeave(code) || parts(code).some((p) => TRAINING.includes(p));
   for (const r of offRequests) {
     const got = codeAt(sched, r.name, r.day);
-    if (!isOff(got)) {
+    if (!isHonoredAbsence(got)) {
       out.push(
-        V("R-5", "HARD", `${r.name} ขอหยุด ${thDate(r.day)} แต่ได้ ${got || "(ว่าง)"}`, {
+        V("R-5", "HARD", `${r.name} ขอหยุด/ลา ${thDate(r.day)} แต่ได้ ${got || "(ว่าง)"}`, {
           day: r.day,
           who: r.name,
           fix: "ทำเครื่องหมาย Not as request",
@@ -2903,9 +2917,18 @@ function conflictsOnDay(requests, day) {
 // ประเภทคำขอ + สถานะ + CRUD รายคำขอ + หน้าต่างเปิด/ปิด (feature: คำขอเวร)
 // ===========================================================================
 
-// ประเภทคำขอที่รองรับ
-const REQUEST_TYPES = ["off", "work", "vacation"];
-const REQUEST_TYPE_TH = { off: "ขอหยุด", work: "ขอทำงาน", vacation: "ลาพักผ่อน (vacation)" };
+// ประเภทคำขอที่รองรับ (เพิ่ม: ลาป่วย/ลากิจ/ลาคลอด + ขออบรมเต็ม/ครึ่งเช้า/ครึ่งบ่าย)
+const REQUEST_TYPES = ["off", "work", "vacation", "sick", "personal", "maternity", "trainFull", "trainAM", "trainPM"];
+const REQUEST_TYPE_TH = {
+  off: "ขอหยุด", work: "ขอทำงาน", vacation: "ลาพักผ่อน",
+  sick: "ลาป่วย", personal: "ลากิจ", maternity: "ลาคลอด",
+  trainFull: "อบรมทั้งวัน", trainAM: "อบรมครึ่งเช้า", trainPM: "อบรมครึ่งบ่าย",
+};
+// map ประเภทคำขอ → รหัสที่เขียนลงตาราง (grid)
+const REQUEST_TYPE_CODE = {
+  off: "off", vacation: "V", sick: "ป", personal: "ก", maternity: "ค",
+  trainFull: "a", trainAM: "b1", trainPM: "b2",
+}; // 'work' จัดการแยก (ใช้ sym)
 
 // สถานะคำขอ ตาม lifecycle ที่กำหนด
 //   submitted  = ส่งคำขอสำเร็จ (ยังอยู่ในช่วงเปิดรับ แก้/ลบได้)
@@ -3343,15 +3366,39 @@ function autoAssign(sched, opts = {}) {
     return "";
   }
 
+  // นับวันทำงานติดต่อกัน "ก่อนถึงวัน d" (ไม่รวม d) — วันทำงาน = มีเวร clinical หรืออบรม
+  function consecutiveWorkDaysBefore(name, d) {
+    let streak = 0;
+    for (let k = d - 1; k >= 1; k--) {
+      const c = grid[name][k - 1];
+      const working = partsOf(c).some((p) => CLIN.includes(p) || ["a","b1","b2"].includes(p));
+      if (working) streak++; else break;
+    }
+    return streak;
+  }
+  // นับจำนวนเวร clinical ที่จัดให้คนนี้ไปแล้วทั้งเดือน (เพื่อคุมโควตาวันทำงาน/วันหยุด)
+  function clinicalDaysSoFar(name) {
+    let n = 0;
+    for (let k = 1; k <= days; k++) if (partsOf(grid[name][k - 1]).some((p) => CLIN.includes(p))) n++;
+    return n;
+  }
+  // โควตาวันทำงานปกติต่อคน = จำนวนวันทำการของเดือน (workingDays) เพื่อให้เหลือวันหยุดครบ targetOff
+  const workQuota = calendar.workingDays || days;
+  const maxWorkDaysStreak = config.maxConsecutiveWorkDays ?? 7;
+
   // staff คนนี้ทำ sym วันนี้ได้ไหม (เคารพ availability + คำขอ + กฎดึก→เช้า + 1 เวร/วัน)
   function canWork(s, d, sym) {
     const name = s.name;
     const avail = s.availableForSlotType || CLIN;
     if (!avail.includes(sym)) return false; // ST-1
     const today = grid[name][d - 1];
-    if (today && today !== "off") return false; // มีเวรแล้ววันนี้ (ไม่ควบ)
+    if (today && today !== "off") return false; // มีเวร/ลา/อบรมแล้ววันนี้ (ไม่ควบในรอบแรก)
     const rq = reqIdx.get(`${name}|${d}`);
     if (rq && (rq.off || rq.vacation)) return false; // เคารพคำขอหยุด/ลา
+    // O-6: ห้ามทำงานติดกันเกิน maxConsecutiveWorkDays วัน (กันช่วงไม่มีวันหยุดคั่น)
+    if (consecutiveWorkDaysBefore(name, d) >= maxWorkDaysStreak) return false;
+    // O-1/W-5: คุมโควตาวันทำงานปกติไม่ให้เกินวันทำการ เพื่อให้วันหยุดครบตามปฏิทิน
+    if (clinicalDaysSoFar(name) >= workQuota) return false;
     // N-2: ดึกเมื่อวาน → ห้ามเช้าวันนี้
     const yest = d >= 2 ? grid[name][d - 2] : lastMonthCode(sched, name, 0);
     if (sym === "ช" && hasSym(yest, "ด")) return false;
@@ -3469,6 +3516,16 @@ function autoAssign(sched, opts = {}) {
     const totalShiftsOnDay = (name, d) =>
       partsOf(grid[name][d - 1]).filter((p) => p !== "off" && p !== "").length;
     // ตรวจกฎพักพื้นฐานสำหรับการ "เพิ่มเวร sym (ปกติหรือ OT)" ให้คน s ในวัน d
+    // นับเวรติดต่อกัน (รวมอบรม, ควบนับ 2) ก่อนถึงวัน d รวมวัน d เอง
+    const consecutiveShifts = (name, d) => {
+      let shifts = 0;
+      for (let k = d; k >= 1; k--) {
+        const n = partsOf(grid[name][k - 1]).filter((p) => CLIN.includes(p) || ["a","b1","b2"].includes(p)).length;
+        if (n > 0) shifts += n; else if (k < d) break; // หยุดเมื่อเจอวันว่าง (ยกเว้นวัน d เอง)
+      }
+      return shifts;
+    };
+    const maxShiftsStreak = config.maxConsecutiveWorkShifts ?? 9;
     const canAddShift = (s, d, sym) => {
       const name = s.name;
       if (!(s.availableForSlotType || CLIN).includes(sym)) return false; // ST-1
@@ -3476,6 +3533,8 @@ function autoAssign(sched, opts = {}) {
       if (totalShiftsOnDay(name, d) >= maxPerDay) return false;
       // ไม่ซ้ำ sym เดิมในวันเดียว
       if (partsOf(grid[name][d - 1]).some((p) => p === sym || p === "OT" + sym)) return false;
+      // O-6: การควบเพิ่มต้องไม่ทำให้เวรติดต่อกันเกิน maxConsecutiveWorkShifts (รวมอบรม)
+      if (consecutiveShifts(name, d) + 1 > maxShiftsStreak) return false;
       // N-2: ดึกเมื่อวาน → ห้ามเช้าวันนี้ (รวม OT เช้า)
       const yest = d >= 2 ? grid[name][d - 2] : lastMonthCode(sched, name, 0);
       if (sym === "ช" && hasSym(yest, "ด")) return false;
@@ -3859,6 +3918,7 @@ function createBrowserClient(url, anonKey, createClientFn) {
     // rules
     checkAll, makeSchedule, makeCalendar, DEFAULT_CONFIG,
     parts, hasSlot, codeAt, onShift, isSenior, EN_SLOT, SLOT_TH, SLOT_EN, CLINICAL,
+    TRAINING, LEAVE, LEAVE_TH, isLeave, isOff,
     // slot time presets + OT (new)
     SLOT_TIME_PRESETS, DEFAULT_SLOT_TIMES, slotHoursFromTimes, spanHours, codeHours,
     OT_SLOTS, OT_BASE, BASE_OT, SLOT_TH_OT, isOTPart, hasOT, baseSlot, hasRegularSlot,
@@ -3882,7 +3942,7 @@ function createBrowserClient(url, anonKey, createClientFn) {
     addStaff, removeStaff, updateLevel, updateStaff, STAFF_LEVELS, PROFESSIONS, STAFF_TYPES,
     // requests
     expandRange, makeOffRange, makeWorkRange, mergeRequests, conflictsOnDay,
-    REQUEST_TYPES, REQUEST_TYPE_TH, REQUEST_STATUS, REQUEST_STATUS_TH,
+    REQUEST_TYPES, REQUEST_TYPE_TH, REQUEST_TYPE_CODE, REQUEST_STATUS, REQUEST_STATUS_TH,
     makeRequest, addRequest, updateRequest, removeRequest, setRequestStatus,
     closeRequestWindow, resolveRequestsAgainstGrid,
     makeRequestWindow, setRequestWindow, getRequestWindow, isRequestOpen, openMonths, crossMonthAllowed,
@@ -4024,7 +4084,15 @@ function buildTypeConfig() {
 /* ---------------- schedule state (จัดเวร/เผยแพร่/แก้ไข) ---------------- */
 let PUBLISHED = false;   // true = เผยแพร่แล้ว (ตารางล็อก ใช้แลกเวรแทน) — ของเดือนที่กำลังแสดง
 let EDIT_MODE = false;   // true = กำลังแก้ไขเวรด้วยมือ (คลิกช่องเพื่อเปลี่ยนเวร)
-const EDIT_CODES = ["off", "ช", "บ", "ด", "ช+บ", "ช+ด", "V", "a", "b1", "b2"]; // ตัวเลือกเวรตอนแก้มือ
+const EDIT_CODES = ["off", "ช", "บ", "ด", "ช+บ", "ช+ด", "ช+OTด", "บ+OTด", "OTช", "OTบ", "OTด", "V", "ป", "ก", "ค", "a", "b1", "b2", "b1+บ", "b2+ช"]; // ตัวเลือกเวรตอนแก้มือ (รวม OT + ลา + อบรม)
+// ป้ายกำกับรหัสเวร/ลา/อบรม สำหรับแสดงใน dropdown แก้มือ
+const CODE_LABEL = {
+  off: "หยุด", "ช": "เช้า", "บ": "บ่าย", "ด": "ดึก", "ช+บ": "เช้า+บ่าย (ควบ)", "ช+ด": "เช้า+ดึก (ควบ)",
+  "ช+OTด": "เช้า+OTดึก", "บ+OTด": "บ่าย+OTดึก", "OTช": "OT เช้า", "OTบ": "OT บ่าย", "OTด": "OT ดึก",
+  "V": "ลาพักผ่อน", "ป": "ลาป่วย", "ก": "ลากิจ", "ค": "ลาคลอด",
+  "a": "อบรมทั้งวัน", "b1": "อบรมครึ่งเช้า", "b2": "อบรมครึ่งบ่าย", "b1+บ": "อบรมเช้า+บ่าย", "b2+ช": "เช้า+อบรมบ่าย",
+};
+const codeLabel = (c) => CODE_LABEL[c] || c;
 
 /* ============================================================================
  * Multi-month registry — จัดเวร/เผยแพร่/แลกเวร ได้ "ทีละเดือน" อิสระต่อกัน
@@ -4137,6 +4205,33 @@ function activateMonth(mk, { rerender = true } = {}) {
     if (typeof renderFeas === "function") renderFeas();
     const sm = document.getElementById("sched-month"); if (sm) sm.value = mk;
     const hdr = document.querySelector(".masthead h1"); if (hdr) hdr.textContent = `ตารางเวร ${mkLabelFull(mk)}`;
+    // --- sync ทุก task ให้ตรงกับเดือนที่จัดเวร (ลดข้อผิดพลาดเปลี่ยนหลายที่) ---
+    syncAllTasksToActiveMonth();
+  }
+}
+
+// ตั้งเดือนของทุก task (ขอเวร, เปิดรับคำขอ admin) ให้ตรงกับเดือนที่กำลังจัดเวร (ACTIVE_MK)
+function syncAllTasksToActiveMonth() {
+  // กล่องขอเวรของ admin (rw-month) — type="month" รับรูปแบบ YYYY-MM
+  const rw = document.getElementById("rw-month");
+  if (rw) {
+    rw.value = ACTIVE_MK;
+    const w = (typeof RulesEngine !== "undefined") ? RulesEngine.getRequestWindow(WINDOWS, ACTIVE_MK) : null;
+    const oa = document.getElementById("rw-open-at"), ca = document.getElementById("rw-close-at"), cx = document.getElementById("rw-cross");
+    if (oa) oa.value = w ? msToLocalInput(w.openAt) : "";
+    if (ca) ca.value = w ? msToLocalInput(w.closeAt) : "";
+    if (cx) cx.checked = Boolean(w && w.allowCrossMonth);
+  }
+  // ฟอร์มขอเวร (rq-month) — ให้เลือกเดือนที่จัดเวรเป็นค่าเริ่มต้น ถ้าเดือนนั้นอยู่ในตัวเลือก
+  const rqM = document.getElementById("rq-month");
+  if (rqM && typeof renderMonthOptions === "function") {
+    renderMonthOptions();
+    if ([...rqM.options].some(o => o.value === ACTIVE_MK)) {
+      rqM.value = ACTIVE_MK;
+      if (typeof updateMonthHint === "function") updateMonthHint();
+      if (typeof syncDayLimits === "function") syncDayLimits();
+      if (typeof updateReqDateInputs === "function") updateReqDateInputs();
+    }
   }
 }
 
@@ -4315,7 +4410,7 @@ function openCellEditor(td) {
   const sel = document.createElement("select");
   sel.className = "cell-edit";
   const opts = EDIT_CODES.includes(cur) ? EDIT_CODES : [cur, ...EDIT_CODES];
-  sel.innerHTML = opts.map(c => `<option value="${c}" ${c === cur ? "selected" : ""}>${c === "off" ? "หยุด" : c}</option>`).join("");
+  sel.innerHTML = opts.map(c => `<option value="${c}" ${c === cur ? "selected" : ""}>${codeLabel(c)} (${c})</option>`).join("");
   td.innerHTML = ""; td.appendChild(sel); sel.focus();
   const commit = () => {
     GRID[name][d - 1] = sel.value;
@@ -4380,19 +4475,29 @@ document.getElementById("goto-issues")?.addEventListener("click", () => {
 function doAutoAssign() {
   if (PUBLISHED) { toast(`${mkLabelFull(ACTIVE_MK)} เผยแพร่แล้ว แก้ไม่ได้ ใช้หน้าแลกเวรแทน`); return; }
   const t = schedType();
+  // ข้อ 7: ดึงคำขอ (ลา/อบรม/หยุด) ลงตารางก่อน เป็นข้อมูลหลัก แล้วค่อยจัดเวรรอบ ๆ
+  seedRequestsIntoGrid();
   const sched = buildSchedule();
   const res = (t === "__all")
     ? RulesEngine.autoAssignByType(sched, { allowStacking: true })
     : RulesEngine.autoAssign(sched, { staffType: t, allowStacking: true });
   // เขียนผลเฉพาะชื่อที่อยู่ในผลลัพธ์ (= ประเภทที่จัด) ไม่แตะประเภทอื่น
+  // คงรหัส ลา/อบรม (V/ป/ก/ค/a/b1/b2) จากคำขอไว้ (autoAssign คืนเฉพาะเวร/off/OT)
+  const LEAVE_TRAIN = new Set(["V", "ป", "ก", "ค", "a", "b1", "b2"]);
   const affected = Object.keys(res.grid);
   for (const name of affected) {
-    GRID[name] = res.grid[name].slice();
-    STORE.current[name] = res.grid[name].slice();
+    const out = res.grid[name].slice();
+    const prev = GRID[name] || [];
+    for (let i = 0; i < out.length; i++) {
+      // ถ้าช่องเดิมเป็นลา/อบรม และ autoAssign ปล่อยว่าง (off) → คงลา/อบรมไว้
+      if (LEAVE_TRAIN.has(prev[i]) && (out[i] === "off" || !out[i])) out[i] = prev[i];
+    }
+    GRID[name] = out;
+    STORE.current[name] = out.slice();
   }
   // baseline: อัปเดตเฉพาะคนที่เพิ่งจัด (คงของประเภทอื่นไว้)
   if (!STORE.baseline) STORE.baseline = RulesEngine.cloneGrid(GRID);
-  for (const name of affected) STORE.baseline[name] = res.grid[name].slice();
+  for (const name of affected) STORE.baseline[name] = GRID[name].slice();
   MONTHS[ACTIVE_MK].baseline = STORE.baseline;
   MONTHS[ACTIVE_MK].grid = GRID;
   persist();
@@ -4644,13 +4749,30 @@ function seedRequestsFromLegacy() {
 }
 
 // sync คำขอเดือนปัจจุบัน (ที่ยังไม่ปิด/ปิดแล้ว) → OFF_REQ/WORK_REQ ให้ engine ใช้จัด/ตรวจกฎ
+// off + ลาทุกชนิด (vacation/sick/personal/maternity) + อบรม = "วันที่ห้ามจัดเวรปกติ" → เข้า OFF_REQ
 function syncLegacyFromRequests() {
   OFF_REQ.length = 0; WORK_REQ.length = 0;
   const mk = (typeof ACTIVE_MK !== "undefined" && ACTIVE_MK) ? ACTIVE_MK : CUR_MK;
+  const blockTypes = ["off", "vacation", "sick", "personal", "maternity", "trainFull", "trainAM", "trainPM"];
   REQUESTS.filter(r => r.monthKey === mk).forEach(r => {
     r.days.forEach(day => {
-      if (r.type === "off" || r.type === "vacation") { if (!OFF_REQ.some(([n,d]) => n===r.name && d===day)) OFF_REQ.push([r.name, day]); }
+      if (blockTypes.includes(r.type)) { if (!OFF_REQ.some(([n,d]) => n===r.name && d===day)) OFF_REQ.push([r.name, day]); }
       else if (r.type === "work") { if (!WORK_REQ.some(([n,d,s]) => n===r.name && d===day && s===r.sym)) WORK_REQ.push([r.name, day, r.sym]); }
+    });
+  });
+}
+
+// เขียนรหัสคำขอ (ลา/อบรม/ขอหยุด) ลงตาราง GRID ของเดือนที่กำลังจัด ก่อนจัดเวรอัตโนมัติ
+// — ให้เป็น "ข้อมูลหลัก" ในตารางก่อน แล้ว scheduler ค่อยเติมเวรที่เหลือรอบ ๆ (ข้อ 7)
+// เขียนเฉพาะช่องที่ยังว่าง/off เพื่อไม่ทับเวรที่จัดแล้ว · work request ปล่อยให้ scheduler จัดตาม sym
+function seedRequestsIntoGrid() {
+  const mk = (typeof ACTIVE_MK !== "undefined" && ACTIVE_MK) ? ACTIVE_MK : CUR_MK;
+  const CODE = RulesEngine.REQUEST_TYPE_CODE;
+  REQUESTS.filter(r => r.monthKey === mk && CODE[r.type]).forEach(r => {
+    const row = GRID[r.name]; if (!row) return;
+    r.days.forEach(day => {
+      const cur = row[day - 1];
+      if (!cur || cur === "off") row[day - 1] = CODE[r.type]; // ไม่ทับเวรที่มีอยู่
     });
   });
 }
@@ -4659,9 +4781,10 @@ const RQ_STATUS_CLS = { submitted: "st-ok", recorded: "", fulfilled: "st-ok", re
 
 function renderRequests() {
   seedRequestsFromLegacy();
-  // ตารางรายการคำขอทั้งหมด (ทุกเดือน) เรียงตามเดือน+วัน
-  const sorted = REQUESTS.slice().sort((a, b) => (a.monthKey + a.from).localeCompare(b.monthKey + b.from));
-  const typeTxt = (r) => r.type === "off" ? "ขอหยุด" : r.type === "vacation" ? "ลาพักผ่อน" : "ขอเวร" + (SHIFT_TH[r.sym] || r.sym);
+  // ตารางรายการคำขอ — กรองเฉพาะเดือนที่กำลังจัดเวร (ACTIVE_MK) ไม่ปนเดือนอื่น
+  const sorted = REQUESTS.filter(r => r.monthKey === ACTIVE_MK)
+    .slice().sort((a, b) => (a.monthKey + String(a.from).padStart(2,"0")).localeCompare(b.monthKey + String(b.from).padStart(2,"0")));
+  const typeTxt = (r) => r.type === "work" ? ("ขอเวร" + (SHIFT_TH[r.sym] || r.sym)) : (RulesEngine.REQUEST_TYPE_TH[r.type] || r.type);
   document.querySelector("#req-table tbody").innerHTML = sorted.map(r => {
     const stTxt = RulesEngine.REQUEST_STATUS_TH[r.status] || r.status;
     const canEdit = r.status === "submitted" && RulesEngine.isRequestOpen(WINDOWS, r.monthKey);
@@ -4678,8 +4801,11 @@ function renderRequests() {
     try { REQUESTS = RulesEngine.removeRequest(REQUESTS, b.dataset.id, { windows: WINDOWS }); syncLegacyFromRequests(); persist(); renderRequests(); renderGrid(); renderIssues(); toast("ลบคำขอแล้ว"); }
     catch (e) { toast(e.message); }
   }));
-  // staff list
-  document.getElementById("rq-who").innerHTML = STAFF.map(s => `<option value="${s.name}">${s.name} (${s.lvl === "E" ? "Expert" : s.lvl === "C" ? "Competent" : "Novice"})</option>`).join("");
+  // staff list — คงค่าที่เลือกไว้เดิม (ไม่เด้งกลับคนแรกหลังส่งคำขอ)
+  const whoEl = document.getElementById("rq-who");
+  const prevWho = whoEl.value;
+  whoEl.innerHTML = STAFF.map(s => `<option value="${s.name}">${s.name} (${s.lvl === "E" ? "Expert" : s.lvl === "C" ? "Competent" : "Novice"})</option>`).join("");
+  if (prevWho && STAFF.some(s => s.name === prevWho)) whoEl.value = prevWho;
   renderMonthOptions();
   renderWindowList();
 }
@@ -4734,9 +4860,11 @@ function renderMonthOptions() {
     const tag = canReq ? "" : " — ยังไม่เปิด";
     return `<option value="${mk}" ${canReq ? "" : "disabled"}>${monthLabelTH(mk)}${canReq ? cross : tag}</option>`;
   }).join("");
-  // เลือกเดือนที่ขอได้เป็นค่าเริ่มต้น
+  // เลือกเดือนเป็นค่าเริ่มต้น: ให้ตรงกับเดือนที่จัดเวร (ACTIVE_MK) ก่อน แล้วค่อยค่าที่เลือกเดิม/เดือนที่เปิดรับ
   const openList = RulesEngine.openMonths(WINDOWS);
-  if (openList.includes(prev)) sel.value = prev;
+  const hasOpt = (v) => [...sel.options].some(o => o.value === v);
+  if (typeof ACTIVE_MK !== "undefined" && hasOpt(ACTIVE_MK)) sel.value = ACTIVE_MK;
+  else if (prev && hasOpt(prev)) sel.value = prev;
   else if (openList.length) sel.value = openList[0];
   updateMonthHint();
   syncDayLimits();
@@ -4748,12 +4876,7 @@ function updateMonthHint() {
   const open = RulesEngine.isRequestOpen(WINDOWS, mk);
   hint.innerHTML = `${monthLabelTH(mk)}: <b style="color:${open ? "var(--ok)" : "var(--alert)"}">${windowStatusText(mk)}</b>`;
 }
-function syncDayLimits() {
-  const mk = document.getElementById("rq-month").value || CUR_MK;
-  const n = daysInMonth(mk);
-  document.getElementById("rq-from").max = n;
-  document.getElementById("rq-to").max = n;
-}
+// (syncDayLimits ย้ายไปรวมกับ updateReqDateInputs ด้านล่าง — รองรับช่องวันที่แบบปฏิทิน)
 
 // admin window list + controls
 function renderWindowList() {
@@ -4812,19 +4935,43 @@ function updateSlotOptions() {
   if (!s) return;
   document.getElementById("rq-slot").innerHTML = s.avail.map(a => `<option value="${a}">${SHIFT_TH[a]}</option>`).join("");
 }
+// แปลงวันที่จากช่อง type="date" (YYYY-MM-DD) → เลขวันที่ของเดือน (1..31) ถ้าอยู่ในเดือน mk
+function dateInputToDay(val, mk) {
+  if (!val) return null;
+  const [y, m] = val.split("-");
+  if (`${y}-${m}` !== mk) return null; // คนละเดือนกับที่ขอ
+  return Number(val.slice(-2));
+}
+// ตั้งค่า min/max ของช่องวันที่ให้อยู่ในเดือนที่เลือก (rq-month) + เติมค่าเริ่มต้นวันที่ 1 ถ้ายังว่าง/นอกเดือน
+function updateReqDateInputs() {
+  const mk = document.getElementById("rq-month").value || CUR_MK;
+  const n = daysInMonth(mk);
+  const first = `${mk}-01`;
+  const last = `${mk}-${String(n).padStart(2, "0")}`;
+  ["rq-from", "rq-to"].forEach(id => {
+    const el = document.getElementById(id); if (!el) return;
+    el.min = first; el.max = last;
+    // ถ้าค่าปัจจุบันไม่อยู่ในเดือนนี้ → รีเซ็ตเป็นวันแรกของเดือน
+    if (!el.value || el.value < first || el.value > last) el.value = first;
+  });
+}
+// เผื่อโค้ดเก่าเรียก syncDayLimits ยังทำงานได้ (ชี้ไปที่ updateReqDateInputs)
+function syncDayLimits() { updateReqDateInputs(); }
+
 function previewReq() {
   const mk = document.getElementById("rq-month").value;
-  const from = +document.getElementById("rq-from").value;
-  const to = +document.getElementById("rq-to").value;
+  const from = dateInputToDay(document.getElementById("rq-from").value, mk);
+  const to = dateInputToDay(document.getElementById("rq-to").value, mk);
   const out = document.getElementById("rq-check");
   if (!mk) { out.textContent = "ยังไม่มีเดือนที่เปิดรับคำขอ"; return; }
-  if (!from || !to) { out.textContent = "เลือกช่วงวันที่"; return; }
+  if (!from || !to) { out.textContent = "เลือกช่วงวันที่ให้อยู่ในเดือนที่ขอ"; return; }
+  if (to < from) { out.textContent = "วันสิ้นสุดต้องไม่ก่อนวันเริ่ม"; return; }
   const days = RulesEngine.expandRange(from, to);
   out.textContent = `ขอ ${days.length} วัน (${from}–${to} ${monthLabelTH(mk)}) ประเภท ${RulesEngine.REQUEST_TYPE_TH[rqType]}`;
 }
 ["rq-who","rq-month","rq-from","rq-to","rq-slot"].forEach(id => {
   const el = document.getElementById(id);
-  if (el) el.addEventListener("change", () => { if (id === "rq-who") updateSlotOptions(); if (id === "rq-month") { syncDayLimits(); updateMonthHint(); } previewReq(); });
+  if (el) el.addEventListener("change", () => { if (id === "rq-who") updateSlotOptions(); if (id === "rq-month") { updateReqDateInputs(); updateMonthHint(); } previewReq(); });
 });
 
 function startEditReq(id) {
@@ -4838,8 +4985,9 @@ function startEditReq(id) {
   document.getElementById("rq-slot-f").hidden = r.type !== "work";
   updateSlotOptions();
   if (r.sym) document.getElementById("rq-slot").value = r.sym;
-  document.getElementById("rq-from").value = r.from;
-  document.getElementById("rq-to").value = r.to;
+  updateReqDateInputs();
+  document.getElementById("rq-from").value = `${r.monthKey}-${String(r.from).padStart(2, "0")}`;
+  document.getElementById("rq-to").value = `${r.monthKey}-${String(r.to).padStart(2, "0")}`;
   document.getElementById("req-form-title").textContent = "แก้ไขคำขอ";
   document.getElementById("rq-submit").textContent = "บันทึกการแก้ไข";
   document.getElementById("rq-cancel-edit").hidden = false;
@@ -4857,10 +5005,12 @@ document.getElementById("req-form").addEventListener("submit", e => {
   e.preventDefault();
   const name = document.getElementById("rq-who").value;
   const mk = document.getElementById("rq-month").value;
-  const from = +document.getElementById("rq-from").value;
-  const to = +document.getElementById("rq-to").value;
+  const from = dateInputToDay(document.getElementById("rq-from").value, mk);
+  const to = dateInputToDay(document.getElementById("rq-to").value, mk);
   const editId = document.getElementById("rq-edit-id").value;
   if (!mk) { toast("ยังไม่มีเดือนที่เปิดรับคำขอ — admin ต้องเปิดก่อน"); return; }
+  if (!from || !to) { toast("เลือกวันที่ให้อยู่ในเดือนที่ขอ"); return; }
+  if (to < from) { toast("วันสิ้นสุดต้องไม่ก่อนวันเริ่ม"); return; }
   const sym = rqType === "work" ? document.getElementById("rq-slot").value : null;
   try {
     if (editId) {
@@ -5127,9 +5277,9 @@ let HISTORY = RulesEngine.addMonth(RulesEngine.makeHistoryStore(), STORE);
 let pendingReq = null; // คำขอที่ตรวจแล้วรออนุมัติ
 
 const SW_LABEL = { pair: "แลกคู่", give: "ยกเวรให้", rotate: "สลับ 3 ทาง", manual: "แลกเวร (กำหนดเอง)" };
-const SW_SLOT = { ช: "เช้า", บ: "บ่าย", ด: "ดึก", off: "หยุด", V: "ลา", a: "อบรม", b1: "อบรมเช้า", b2: "อบรมบ่าย", "": "ว่าง" };
+const SW_SLOT = { ช: "เช้า", บ: "บ่าย", ด: "ดึก", off: "หยุด", V: "ลาพักผ่อน", "ป": "ลาป่วย", "ก": "ลากิจ", "ค": "ลาคลอด", a: "อบรมทั้งวัน", b1: "อบรมครึ่งเช้า", b2: "อบรมครึ่งบ่าย", "OTช": "OT เช้า", "OTบ": "OT บ่าย", "OTด": "OT ดึก", "": "ว่าง" };
 function slotName(code) { return (code || "").split("+").map(p => SW_SLOT[p] || p).join("+") || "ว่าง"; }
-const SW_NEW_CODES = ["off", "ช", "บ", "ด", "ช+บ", "ช+ด", "V"]; // เวรใหม่ที่เลือกได้ตอนแลก
+const SW_NEW_CODES = ["off", "ช", "บ", "ด", "ช+บ", "ช+ด", "V", "ป", "ก", "ค", "b1", "b2", "a"]; // เวรใหม่ที่เลือกได้ตอนแลก (รวมลา/อบรม)
 let SW_LEG_COUNT = 2; // จำนวนคน/เวรที่กำลังแลก (เพิ่ม/ลดได้)
 
 function renderSwapLegs() {
