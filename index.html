@@ -981,9 +981,11 @@ function fullSeq(sched, name) {
   return seq;
 }
 
-// label สำหรับ item ใน fullSeq
-function seqLabel(item, monthLabel = "มี.ค.", prevLabel = "ก.พ.") {
-  return `${item.day} ${item.inMonth ? monthLabel : prevLabel}`;
+// label สำหรับ item ใน fullSeq (ใช้เดือนที่ตั้งไว้จาก checkAll)
+function seqLabel(item, monthLabel, prevLabel) {
+  const cur = monthLabel || (typeof _curMonLabel !== "undefined" ? _curMonLabel : "มี.ค.");
+  const prev = prevLabel || (typeof _prevMonLabel !== "undefined" ? _prevMonLabel : "ก.พ.");
+  return `${item.day} ${item.inMonth ? cur : prev}`;
 }
 
 /**
@@ -997,7 +999,16 @@ function seqLabel(item, monthLabel = "มี.ค.", prevLabel = "ก.พ.") {
  * บริสุทธิ์ (pure) — ไม่แตะ DOM — ทดสอบด้วย node:test ได้
  */
 
-const thDate = (d) => `${d} มี.ค.`;
+// ป้ายเดือนไทย (ย่อ) สำหรับข้อความกฎ — ตั้งค่าจาก calendar ตอน checkAll (ไม่ fix เป็นมี.ค.)
+const _TH_MON_ABBR = ["ม.ค.","ก.พ.","มี.ค.","เม.ย.","พ.ค.","มิ.ย.","ก.ค.","ส.ค.","ก.ย.","ต.ค.","พ.ย.","ธ.ค."];
+let _curMonLabel = "มี.ค.";   // เดือนที่กำลังตรวจ (เลขไทยย่อ)
+let _prevMonLabel = "ก.พ.";   // เดือนก่อนหน้า (สำหรับ label คาบเกี่ยวเดือน)
+function _setMonthLabels(calendar) {
+  if (!calendar || typeof calendar.month !== "number") return;
+  _curMonLabel = _TH_MON_ABBR[calendar.month] || "";
+  _prevMonLabel = _TH_MON_ABBR[(calendar.month + 11) % 12] || "";
+}
+const thDate = (d) => `${d} ${_curMonLabel}`;
 
 // factory ของ violation
 const V = (code, level, message, extra = {}) => ({ code, level, message, ...extra });
@@ -1656,6 +1667,7 @@ function checkRequests(sched, out) {
 function checkAll(sched) {
   const out = [];
   const passed = [];
+  _setMonthLabels(sched.calendar); // ตั้งป้ายเดือนให้ตรงกับเดือนที่กำลังตรวจ (ไม่ค้าง มี.ค.)
   checkStaffConstraints(sched, out);
   checkStaffing(sched, out, passed);
   checkHours(sched, out);
@@ -3598,6 +3610,81 @@ function autoAssign(sched, opts = {}) {
         }
       }
       u.got = have; // อัปเดตจำนวนที่เติมได้จริง
+    }
+
+    // ---- Work-day balancing — ให้ทุกคนมีวันทำงานปกติครบ workQuota (เหลือวันหยุด = targetOff)
+    // คนที่ทำงานน้อยกว่าโควตา (วันหยุดเกิน) → เติมเวรปกติในวันที่ยัง off (เคารพกฎพัก/คำขอ)
+    // ควบเวร (doubling) จะช่วยให้กำลังคนรายวันพอ ส่วนพาสนี้คุมจำนวน "วันทำงาน" รายคนให้ครบ
+    const workDaysOf = (name) => {
+      let n = 0;
+      for (let k = 1; k <= days; k++) if (partsOf(grid[name][k - 1]).some((p) => CLIN.includes(p))) n++;
+      return n;
+    };
+    // ถ้าลงเวรวัน d ให้ชื่อนี้ จะทำให้ทำงานติดกันเกิน maxConsecutiveWorkDays หรือไม่
+    const wouldExceedWorkDayStreak = (name, d) => {
+      const isWorkDay = (k) => {
+        if (k < 1 || k > days) return false;
+        return partsOf(grid[name][k - 1]).some((p) => CLIN.includes(p) || ["a","b1","b2"].includes(p));
+      };
+      let streak = 1; // รวมวัน d เอง
+      for (let k = d - 1; k >= 1 && isWorkDay(k); k--) streak++;
+      for (let k = d + 1; k <= days && isWorkDay(k); k++) streak++;
+      return streak > (config.maxConsecutiveWorkDays ?? 7);
+    };
+    // เลือกเวรที่ควรลงในวัน d ให้คน s (ไล่จากเวรที่กำลังคนน้อยสุดก่อน) — คืน sym หรือ null
+    const pickSymForDay = (s, d) => {
+      const avail = s.availableForSlotType || CLIN;
+      if (wouldExceedWorkDayStreak(s.name, d)) return null; // O-6 วันติดกัน
+      const cands = SLOT_ORDER.filter((sym) => avail.includes(sym) && canAddShift(s, d, sym));
+      if (!cands.length) return null;
+      // เลือกเวรที่ยังมีกำลังคนน้อยกว่าเป้าหมายก่อน แล้วค่อยเวรที่คนน้อยสุด
+      cands.sort((a, b) => {
+        const na = coverageCount(d, a), nb = coverageCount(d, b);
+        const da = (staffPerShift[a] || 0) - na, db = (staffPerShift[b] || 0) - nb;
+        if ((db > 0) !== (da > 0)) return db > 0 ? 1 : -1; // เวรที่ยังขาดมาก่อน
+        return na - nb;
+      });
+      return cands[0];
+    };
+    // วนเติมจนกว่าทุกคนจะครบโควตา หรือไม่มีช่องให้เติมแล้ว
+    let guard = pool.length * days + 10;
+    let progressed = true;
+    while (progressed && guard-- > 0) {
+      progressed = false;
+      // คนที่ยังทำงานไม่ครบโควตา เรียงจากขาดมากสุด
+      const under = pool
+        .map((s) => ({ s, deficit: workQuota - workDaysOf(s.name) }))
+        .filter((x) => x.deficit > 0)
+        .sort((a, b) => b.deficit - a.deficit);
+      for (const { s } of under) {
+        const name = s.name;
+        // หา "วัน off" ที่ยังเติมเวรได้ (ไม่ใช่วันขอหยุด/ลา/อบรม) เรียงให้กระจายงาน
+        let placed = false;
+        const offDays = [];
+        for (let d = 1; d <= days; d++) {
+          const cur = grid[name][d - 1];
+          if (cur && cur !== "off") continue; // มีเวร/ลา/อบรมแล้ว
+          const rq = reqIdx.get(`${name}|${d}`);
+          if (rq && (rq.off || rq.vacation)) continue; // เคารพคำขอหยุด/ลา
+          offDays.push(d);
+        }
+        // ลงเวรวันที่กำลังคนยังขาดก่อน
+        offDays.sort((a, b) => {
+          const sa = SLOT_ORDER.reduce((t, sym) => t + Math.max(0, (staffPerShift[sym] || 0) - coverageCount(a, sym)), 0);
+          const sb = SLOT_ORDER.reduce((t, sym) => t + Math.max(0, (staffPerShift[sym] || 0) - coverageCount(b, sym)), 0);
+          return sb - sa;
+        });
+        for (const d of offDays) {
+          const sym = pickSymForDay(s, d);
+          if (sym) {
+            grid[name][d - 1] = sym;
+            load.set(name, (load.get(name) || 0) + 1);
+            placed = true; progressed = true;
+            break;
+          }
+        }
+        if (!placed) { /* คนนี้เติมไม่ได้แล้ว (กฎพักบีบ) ข้ามไป */ }
+      }
     }
   }
 
