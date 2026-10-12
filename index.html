@@ -3414,6 +3414,11 @@ function autoAssign(sched, opts = {}) {
     // N-2: ดึกเมื่อวาน → ห้ามเช้าวันนี้
     const yest = d >= 2 ? grid[name][d - 2] : lastMonthCode(sched, name, 0);
     if (sym === "ช" && hasSym(yest, "ด")) return false;
+    // ข้อ 2: ควบเวรเมื่อวาน → วันนี้ห้ามขึ้นเช้า (เบรกไม่ถึง 8 ชม.)
+    if (sym === "ช" && d >= 2) {
+      const yParts = partsOf(grid[name][d - 2]).filter((p) => CLIN.includes(p) || p.startsWith("OT"));
+      if (yParts.length >= 2) return false;
+    }
     // ดึกวันนี้ → พรุ่งนี้ห้ามเช้า: ตรวจตอนจัดเช้าแล้ว; กันดึกติดกันยาวเกิน
     if (sym === "ด") {
       let streak = 0;
@@ -3467,13 +3472,37 @@ function autoAssign(sched, opts = {}) {
         if (chosen.length >= need) break;
         place(s);
       }
-      // เติมที่เหลือ: เรียงตาม least-loaded แล้วให้ Expert/Senior มาก่อนเพื่อคุมกฎ
+      // เติมที่เหลือ: กระจายเวรให้สมดุล โดยเฉพาะ "เวร sym นี้ ในกลุ่ม level เดียวกัน" (ข้อ 3)
+      //   นับว่าแต่ละคนมีเวร sym นี้ / เวรดึก ไปแล้วกี่เวร เพื่อกระจายให้สมดุล
+      const symCountOf = (nm) => {
+        let n = 0;
+        for (let k = 1; k < d; k++) if (hasSym(grid[nm][k - 1], sym)) n++;
+        return n;
+      };
+      const nightCountOf = (nm) => {
+        let n = 0;
+        for (let k = 1; k < d; k++) if (hasSym(grid[nm][k - 1], "ด")) n++;
+        return n;
+      };
       const rest = pool
         .filter((s) => !chosen.includes(s) && canWork(s, d, sym))
         .sort((a, b) => {
-          const la = load.get(a.name),
-            lb = load.get(b.name);
+          // ยึด "สมดุลเวรดึก" เป็นหลักก่อนเสมอ (ดึกหนักสุด ควรเท่ากันที่สุด)
+          //   - จัดเวรดึก: คนที่ได้ดึกน้อยสุดก่อน
+          //   - จัดเวรเช้า/บ่าย: คนที่ "ดึกเยอะ" ควรได้เวรกลางวันน้อยลง → ให้คนดึกน้อยกว่าได้ก่อน
+          const na = nightCountOf(a.name), nb = nightCountOf(b.name);
+          if (sym === "ด") {
+            if (na !== nb) return na - nb; // ดึกน้อยสุดได้ดึกก่อน
+          }
+          // สมดุลเวร sym ปัจจุบัน (เช้า/บ่าย/ดึก) ภายในกลุ่ม level
+          const sa = symCountOf(a.name), sb = symCountOf(b.name);
+          if (sa !== sb) return sa - sb;
+          // เวรกลางวัน: ถ่วงด้วยจำนวนดึก (คนดึกเยอะได้กลางวันทีหลัง)
+          if (sym !== "ด" && na !== nb) return na - nb;
+          // ภาระงานรวมน้อยกว่าก่อน
+          const la = load.get(a.name), lb = load.get(b.name);
           if (la !== lb) return la - lb;
+          // Expert/Senior ก่อนเพื่อคุมกฎ
           return rank(a) - rank(b);
         });
 
@@ -3529,6 +3558,12 @@ function autoAssign(sched, opts = {}) {
       partsOf(grid[name][d - 1]).filter((p) => p !== "off" && p !== "").length;
     // วัน d เป็นวันหยุด (off) ของคนนี้ไหม — ว่าง/off ล้วน (ไม่นับลา/อบรม เป็นวันหยุด)
     const isDayOff = (name, d) => { const c = grid[name][d - 1]; return !c || c === "off"; };
+    // วัน d เป็น "วันควบเวร" ไหม (มีเวร clinical/OT ≥ 2 ส่วน) — ใช้คุมข้อ 1/ข้อ 2
+    const isDoubleDay = (name, d) => {
+      if (d < 1 || d > days) return false;
+      const n = partsOf(grid[name][d - 1]).filter((p) => CLIN.includes(p) || p.startsWith("OT")).length;
+      return n >= 2;
+    };
     // ตรวจกฎพักพื้นฐานสำหรับการ "เพิ่มเวร sym (ปกติหรือ OT)" ให้คน s ในวัน d
     // นับเวรติดต่อกัน (รวมอบรม, ควบนับ 2) ก่อนถึงวัน d รวมวัน d เอง
     const consecutiveShifts = (name, d) => {
@@ -3559,9 +3594,14 @@ function autoAssign(sched, opts = {}) {
       }
       // O-6: การควบเพิ่มต้องไม่ทำให้เวรติดต่อกันเกิน maxConsecutiveWorkShifts (รวมอบรม)
       if (consecutiveShifts(name, d) + 1 > maxShiftsStreak) return false;
+      // ข้อ 1: ห้ามควบเวร 2 วันติดกัน — ต้องมีวันเวรเดี่ยวคั่น
+      //   (ถ้าวัน d-1 หรือ d+1 เป็นวันควบอยู่แล้ว → ห้ามทำให้ d เป็นวันควบอีก)
+      if (isDoubleDay(name, d - 1) || isDoubleDay(name, d + 1)) return false;
       // N-2: ดึกเมื่อวาน → ห้ามเช้าวันนี้ (รวม OT เช้า)
       const yest = d >= 2 ? grid[name][d - 2] : lastMonthCode(sched, name, 0);
       if (sym === "ช" && hasSym(yest, "ด")) return false;
+      // ข้อ 2: ควบเวรเมื่อวาน (จบดึก เช่น ช+บ ถึง ~23:00) → วันนี้ห้ามขึ้นเช้า (เบรก < 8 ชม.)
+      if (sym === "ช" && isDoubleDay(name, d - 1)) return false;
       // ดึกวันนี้ → ห้ามเช้าพรุ่งนี้
       if (sym === "ด") {
         const tomo = d < days ? grid[name][d] : "";
@@ -3663,11 +3703,18 @@ function autoAssign(sched, opts = {}) {
         if (got < need) recompUnfilled.push({ day: d, sym, need, got });
       }
     }
+    // นับเวร clinical ปกติ (ไม่รวม OT) ของคนในเดือนนี้ — ใช้ตัดสินว่าเวรที่เพิ่มควรเป็น OT
+    const regularShiftsOf = (name) => {
+      let n = 0;
+      for (let k = 1; k <= days; k++) n += partsOf(grid[name][k - 1]).filter((p) => CLIN.includes(p)).length;
+      return n;
+    };
     for (const u of recompUnfilled) {
       const { day: d, sym } = u;
       let have = coverageCount(d, sym);
       const need = staffPerShift[sym] || 0;
-      // 1) ควบเวรปกติ: คนที่ทำงานอยู่แล้ววันนี้ มารับเวรนี้เพิ่ม (ช+บ / ช+ด)
+      // ข้อ 5: เติมกำลังคนที่ขาดด้วย "ควบเวร" บนวันทำงาน — ถ้าคนนั้นมีเวรปกติครบโควตาแล้ว
+      //        ส่วนที่เพิ่มให้นับเป็น OT (OTช/OTบ/OTด) ไม่งั้นเป็นเวรปกติ
       if (have < need) {
         const doublers = pool
           .filter((s) => {
@@ -3677,12 +3724,13 @@ function autoAssign(sched, opts = {}) {
           .sort((a, b) => load.get(a.name) - load.get(b.name));
         for (const s of doublers) {
           if (have >= need) break;
-          addPart(s.name, d, sym);
-          load.set(s.name, load.get(s.name) + 1);
+          const asOT = regularShiftsOf(s.name) >= workQuota; // เกินโควตา → OT
+          addPart(s.name, d, asOT ? ("OT" + sym) : sym);
+          if (!asOT) load.set(s.name, load.get(s.name) + 1);
           have++;
         }
       }
-      // 2) OT: ลง OT ควบกับเวรปกติในวันทำงานเท่านั้น (ไม่กินวันหยุด)
+      // ถ้ายังขาด → ลง OT ให้คนที่ทำงานอยู่แล้ว (เผื่อ doublers รอบแรกไม่พอ)
       if (have < need) {
         const otCode = "OT" + sym;
         const otCands = pool
@@ -5677,6 +5725,11 @@ function persist() {
     if (typeof SB_ADAPTER !== "undefined" && SB_ADAPTER && CURRENT_ROLE === "admin") {
       const data = RulesEngine.serializeMonth(STORE); data.staff = STORE.sched.staff;
       data.holidays = HOLIDAYS; data.year = YEAR; data.month = MONTH; data.days = DAYS;
+      // เก็บสถานะเผยแพร่ + baseline ด้วย เพื่อให้โหลดกลับมาแล้วรู้ว่าเดือนนี้เผยแพร่แล้ว
+      const st = MONTHS[ACTIVE_MK] || {};
+      data.published = Boolean(st.published);
+      data.baseline = st.baseline || STORE.baseline || null;
+      data.swapLog = st.swapLog || STORE.swapLog || [];
       SB_ADAPTER.saveMonth(ACTIVE_MK, data).catch(() => {});
     }
   } catch (e) {}
