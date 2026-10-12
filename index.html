@@ -3409,8 +3409,8 @@ function autoAssign(sched, opts = {}) {
     if (rq && (rq.off || rq.vacation)) return false; // เคารพคำขอหยุด/ลา
     // O-6: ห้ามทำงานติดกันเกิน maxConsecutiveWorkDays วัน (กันช่วงไม่มีวันหยุดคั่น)
     if (consecutiveWorkDaysBefore(name, d) >= maxWorkDaysStreak) return false;
-    // O-1/W-5: คุมโควตาวันทำงานปกติไม่ให้เกินวันทำการ เพื่อให้วันหยุดครบตามปฏิทิน
-    if (clinicalDaysSoFar(name) >= workQuota) return false;
+    // หมายเหตุ: ไม่ตัดด้วยโควตาวันทำงานในรอบนี้ (เดิมทำให้วันปลายเดือนไม่มีคนจัด)
+    //   → ครอบคลุมทุกวันก่อน แล้วค่อย "ตัดวันหยุด" ให้ครบ targetOff ในพาสท้าย
     // N-2: ดึกเมื่อวาน → ห้ามเช้าวันนี้
     const yest = d >= 2 ? grid[name][d - 2] : lastMonthCode(sched, name, 0);
     if (sym === "ช" && hasSym(yest, "ด")) return false;
@@ -3527,6 +3527,8 @@ function autoAssign(sched, opts = {}) {
     const clinCount = (code) => partsOf(code).filter((p) => CLIN.includes(p)).length;
     const totalShiftsOnDay = (name, d) =>
       partsOf(grid[name][d - 1]).filter((p) => p !== "off" && p !== "").length;
+    // วัน d เป็นวันหยุด (off) ของคนนี้ไหม — ว่าง/off ล้วน (ไม่นับลา/อบรม เป็นวันหยุด)
+    const isDayOff = (name, d) => { const c = grid[name][d - 1]; return !c || c === "off"; };
     // ตรวจกฎพักพื้นฐานสำหรับการ "เพิ่มเวร sym (ปกติหรือ OT)" ให้คน s ในวัน d
     // นับเวรติดต่อกัน (รวมอบรม, ควบนับ 2) ก่อนถึงวัน d รวมวัน d เอง
     const consecutiveShifts = (name, d) => {
@@ -3582,78 +3584,90 @@ function autoAssign(sched, opts = {}) {
       grid[name][d - 1] = list.join("+");
     };
 
-    // ---- Work-day balancing — ให้ทุกคนมีวันทำงานปกติครบ workQuota ก่อน (วันหยุด = targetOff)
-    //   รันก่อนเติมควบ/OT เพื่อให้ OT ไปซ้อนบน "วันทำงาน" ที่ครบแล้ว ไม่กินวันหยุด
-    const workDaysOf = (name) => {
+    // ----- STEP A: ตัดวันทำงานส่วนเกินให้ทุกคนมีวันหยุดครบ targetOff -----
+    //   คนที่ off น้อยกว่าเป้าหมาย (ทำงานหลายวันเกินไป) → ปลดวันทำงานออกเป็น off
+    //   โดยถ้าปลดแล้วเวรนั้นจะขาด ให้ "ควบ" ให้คนอื่นที่ทำงานวันเดียวกันมารับแทน (คงกำลังคน)
+    const offDaysOf = (name) => {
       let n = 0;
-      for (let k = 1; k <= days; k++) if (partsOf(grid[name][k - 1]).some((p) => CLIN.includes(p))) n++;
+      for (let k = 1; k <= days; k++) if (isDayOff(name, k)) n++;
       return n;
     };
-    const wouldExceedWorkDayStreak = (name, d) => {
-      const isWorkDay = (k) => {
-        if (k < 1 || k > days) return false;
-        return partsOf(grid[name][k - 1]).some((p) => CLIN.includes(p) || ["a","b1","b2"].includes(p));
-      };
-      let streak = 1;
-      for (let k = d - 1; k >= 1 && isWorkDay(k); k--) streak++;
-      for (let k = d + 1; k <= days && isWorkDay(k); k++) streak++;
-      return streak > (config.maxConsecutiveWorkDays ?? 7);
+    const targetOff = calendar.targetOff ?? (days - workQuota);
+    // พยายามหาคนมา "ควบ" รับเวร sym วัน d แทนคนที่กำลังจะถูกปลด (คืน true ถ้าทำได้)
+    const coverByDoubling = (dayD, sym, excludeName) => {
+      const cand = pool
+        .filter((s) => s.name !== excludeName)
+        .filter((s) => {
+          const t = grid[s.name][dayD - 1];
+          return t && t !== "off" && clinCount(t) >= 1 && canAddShift(s, dayD, sym);
+        })
+        .sort((a, b) => load.get(a.name) - load.get(b.name));
+      if (!cand.length) return false;
+      addPart(cand[0].name, dayD, sym);
+      load.set(cand[0].name, load.get(cand[0].name) + 1);
+      return true;
     };
-    const pickSymForDay = (s, d) => {
-      const avail = s.availableForSlotType || CLIN;
-      if (wouldExceedWorkDayStreak(s.name, d)) return null;
-      const cands = SLOT_ORDER.filter((sym) => avail.includes(sym) && canAddShift(s, d, sym));
-      if (!cands.length) return null;
-      cands.sort((a, b) => {
-        const na = coverageCount(d, a), nb = coverageCount(d, b);
-        const da = (staffPerShift[a] || 0) - na, db = (staffPerShift[b] || 0) - nb;
-        if ((db > 0) !== (da > 0)) return db > 0 ? 1 : -1;
-        return na - nb;
-      });
-      return cands[0];
-    };
-    (function balanceWorkDays() {
+    (function trimToTargetOff() {
       let guard = pool.length * days + 10;
       let progressed = true;
       while (progressed && guard-- > 0) {
         progressed = false;
-        const under = pool
-          .map((s) => ({ s, deficit: workQuota - workDaysOf(s.name) }))
+        // คนที่วันหยุดยังขาด เรียงจากขาดมากสุด
+        const over = pool
+          .map((s) => ({ s, deficit: targetOff - offDaysOf(s.name) }))
           .filter((x) => x.deficit > 0)
           .sort((a, b) => b.deficit - a.deficit);
-        for (const { s } of under) {
+        for (const { s } of over) {
           const name = s.name;
-          const offDays = [];
+          // วันทำงานที่เป็น "เวรเดี่ยว clinical" (ไม่ควบ ไม่ OT ไม่อบรม) — ปลดง่ายสุด
+          const singleDays = [];
           for (let d = 1; d <= days; d++) {
-            const cur = grid[name][d - 1];
-            if (cur && cur !== "off") continue;
-            const rq = reqIdx.get(`${name}|${d}`);
-            if (rq && (rq.off || rq.vacation)) continue;
-            offDays.push(d);
+            const code = grid[name][d - 1];
+            const ps = partsOf(code);
+            if (ps.length === 1 && CLIN.includes(ps[0])) singleDays.push({ d, sym: ps[0] });
           }
-          offDays.sort((a, b) => {
-            const sa = SLOT_ORDER.reduce((t, sym) => t + Math.max(0, (staffPerShift[sym] || 0) - coverageCount(a, sym)), 0);
-            const sb = SLOT_ORDER.reduce((t, sym) => t + Math.max(0, (staffPerShift[sym] || 0) - coverageCount(b, sym)), 0);
-            return sb - sa;
+          if (!singleDays.length) continue;
+          // เลือกปลดวันที่เวรนั้น "เกินความต้องการ" ก่อน (ปลดได้โดยไม่ต้องควบ)
+          singleDays.sort((a, b) => {
+            const surA = coverageCount(a.d, a.sym) - (staffPerShift[a.sym] || 0);
+            const surB = coverageCount(b.d, b.sym) - (staffPerShift[b.sym] || 0);
+            return surB - surA;
           });
-          for (const d of offDays) {
-            const sym = pickSymForDay(s, d);
-            if (sym) {
-              grid[name][d - 1] = sym;
-              load.set(name, (load.get(name) || 0) + 1);
-              progressed = true;
-              break;
+          let done = false;
+          for (const { d, sym } of singleDays) {
+            const surplus = coverageCount(d, sym) - (staffPerShift[sym] || 0);
+            if (surplus > 0) {
+              // ปลดได้เลย ยังเหลือกำลังคนพอ
+              grid[name][d - 1] = "off";
+              load.set(name, Math.max(0, (load.get(name) || 0) - 1));
+              progressed = true; done = true; break;
+            }
+            // ไม่เกิน → ลองหาคนมาควบแทน แล้วค่อยปลด
+            if (coverByDoubling(d, sym, name)) {
+              grid[name][d - 1] = "off";
+              load.set(name, Math.max(0, (load.get(name) || 0) - 1));
+              progressed = true; done = true; break;
             }
           }
+          if (done) break; // คำนวณใหม่รอบถัดไป (coverage เปลี่ยน)
         }
       }
     })();
 
-    for (const u of unfilled) {
+    // ----- STEP B: เติมกำลังคนที่ยังขาด — ควบเวรปกติก่อน แล้วค่อย OT (ซ้อนบนวันทำงาน) -----
+    const recompUnfilled = [];
+    for (let d = 1; d <= days; d++) {
+      for (const sym of SLOT_ORDER) {
+        const need = staffPerShift[sym] || 0;
+        const got = coverageCount(d, sym);
+        if (got < need) recompUnfilled.push({ day: d, sym, need, got });
+      }
+    }
+    for (const u of recompUnfilled) {
       const { day: d, sym } = u;
       let have = coverageCount(d, sym);
       const need = staffPerShift[sym] || 0;
-      // 1) ควบเวร: คนที่ "ทำงานอยู่แล้ววันนี้" (เวรอื่น) และเพิ่ม sym นี้ได้ (เวรปกติ)
+      // 1) ควบเวรปกติ: คนที่ทำงานอยู่แล้ววันนี้ มารับเวรนี้เพิ่ม (ช+บ / ช+ด)
       if (have < need) {
         const doublers = pool
           .filter((s) => {
@@ -3663,30 +3677,28 @@ function autoAssign(sched, opts = {}) {
           .sort((a, b) => load.get(a.name) - load.get(b.name));
         for (const s of doublers) {
           if (have >= need) break;
-          addPart(s.name, d, sym); // เวรปกติ (ควบ)
+          addPart(s.name, d, sym);
           load.set(s.name, load.get(s.name) + 1);
           have++;
         }
       }
-      // 2) OT: ถ้ายังขาด → ลง OT "ควบกับเวรปกติในวันทำงานเท่านั้น" (ห้ามลงในวันหยุด)
-      //    เพื่อให้วันหยุดจริงครบตามปฏิทิน · OT เป็น extra ที่ซ้อนบนเวรปกติ
+      // 2) OT: ลง OT ควบกับเวรปกติในวันทำงานเท่านั้น (ไม่กินวันหยุด)
       if (have < need) {
         const otCode = "OT" + sym;
         const otCands = pool
           .filter((s) => {
             const t = grid[s.name][d - 1];
-            // ต้องมีเวรปกติอยู่แล้ววันนี้ (ไม่ใช่วันหยุด/ลา/อบรม) จึงจะเพิ่ม OT ควบได้
             if (!(t && t !== "off" && clinCount(t) >= 1)) return false;
             return canAddShift(s, d, sym);
           })
           .sort((a, b) => load.get(a.name) - load.get(b.name));
         for (const s of otCands) {
           if (have >= need) break;
-          addPart(s.name, d, otCode); // OT ควบบนเวรปกติ (ไม่กินวันหยุด ไม่นับเป็นวันทำงาน)
+          addPart(s.name, d, otCode);
           have++;
         }
       }
-      u.got = have; // อัปเดตจำนวนที่เติมได้จริง
+      u.got = have;
     }
   }
 
@@ -4230,6 +4242,27 @@ const TH_HOLIDAYS = {
   "2027-12-05": "วันพ่อแห่งชาติ",
   "2027-12-10": "วันรัฐธรรมนูญ",
   "2027-12-31": "วันสิ้นปี",
+  // 2028 (พ.ศ. 2571) — วันหยุดราชการวันที่คงที่แม่นยำ · วันพระใหญ่ (จันทรคติ) เป็นค่าประมาณ แก้ได้ที่ปฏิทิน
+  "2028-01-01": "วันขึ้นปีใหม่",
+  "2028-02-10": "วันมาฆบูชา",
+  "2028-04-06": "วันจักรี",
+  "2028-04-13": "วันสงกรานต์",
+  "2028-04-14": "วันสงกรานต์",
+  "2028-04-15": "วันสงกรานต์",
+  "2028-05-01": "วันแรงงาน",
+  "2028-05-04": "วันฉัตรมงคล",
+  "2028-05-08": "วันวิสาขบูชา",
+  "2028-06-03": "วันเฉลิมฯ พระราชินี",
+  "2028-07-05": "วันอาสาฬหบูชา",
+  "2028-07-06": "วันเข้าพรรษา",
+  "2028-07-28": "วันเฉลิมฯ ร.10",
+  "2028-08-12": "วันแม่แห่งชาติ",
+  "2028-10-13": "วันคล้ายวันสวรรคต ร.9",
+  "2028-10-23": "วันปิยมหาราช",
+  "2028-12-05": "วันพ่อแห่งชาติ",
+  "2028-12-10": "วันรัฐธรรมนูญ",
+  "2028-12-11": "ชดเชยวันรัฐธรรมนูญ",
+  "2028-12-31": "วันสิ้นปี",
 };
 // คืน { day → ชื่อวันหยุด } ของเดือน mk จากตาราง TH_HOLIDAYS
 function defaultHolidaysFor(mk) {
