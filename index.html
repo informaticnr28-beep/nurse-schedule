@@ -3668,12 +3668,64 @@ function autoAssign(sched, opts = {}) {
       if (streak > (config.maxConsecutiveWorkDays ?? 7)) return false;
       return true;
     };
+    // วันทำงานที่เป็น "เวรเดี่ยว clinical" (ปลดเป็นวันหยุดได้ง่าย ไม่ใช่ควบ/ลา/อบรม)
+    const singleClinDaysOf = (name) => {
+      const out = [];
+      for (let d = 1; d <= days; d++) {
+        const ps = partsOf(grid[name][d - 1]);
+        if (ps.length === 1 && CLIN.includes(ps[0])) out.push({ d, sym: ps[0] });
+      }
+      return out;
+    };
+    // STEP A1: ตัดวันทำงานส่วนเกินของคนที่ทำงานเกินโควตา → ให้เป็นวันหยุด (คงกำลังคนด้วยการควบ)
+    (function trimOverQuota() {
+      let guard = pool.length * days + 10;
+      let progressed = true;
+      while (progressed && guard-- > 0) {
+        progressed = false;
+        const over = pool
+          .map((s) => ({ s, excess: workDaysOfA(s.name) - workQuota }))
+          .filter((x) => x.excess > 0)
+          .sort((a, b) => b.excess - a.excess);
+        for (const { s } of over) {
+          const name = s.name;
+          const singles = singleClinDaysOf(name);
+          if (!singles.length) continue;
+          // ปลดวันที่เวรนั้น "เกินความต้องการมากสุด" ก่อน (ปลดโดยไม่ทำให้ขาด)
+          singles.sort((a, b) =>
+            (coverageCount(b.d, b.sym) - (staffPerShift[b.sym] || 0)) -
+            (coverageCount(a.d, a.sym) - (staffPerShift[a.sym] || 0)));
+          let done = false;
+          for (const { d, sym } of singles) {
+            const surplus = coverageCount(d, sym) - (staffPerShift[sym] || 0);
+            if (surplus > 0) {
+              // เวรนั้นมีคนเกินอยู่แล้ว → ปลดเป็นวันหยุดได้เลย
+              grid[name][d - 1] = "off";
+              load.set(name, Math.max(0, (load.get(name) || 0) - 1));
+              progressed = true; done = true; break;
+            }
+            // ไม่เกิน → หาคนอื่นที่ทำงานวันเดียวกันมาควบรับแทน (คงกำลังคน) แล้วค่อยปลด
+            const sub = pool.find((x) => x.name !== name && (() => {
+              const t = grid[x.name][d - 1];
+              return t && t !== "off" && clinCount(t) >= 1 && canAddShift(x, d, sym);
+            })());
+            if (sub) {
+              addPart(sub.name, d, sym); // เวรที่ 2 (จะถูกทำเป็น OT ใน STEP C)
+              grid[name][d - 1] = "off";
+              load.set(name, Math.max(0, (load.get(name) || 0) - 1));
+              progressed = true; done = true; break;
+            }
+          }
+          if (done) break;
+        }
+      }
+    })();
+    // STEP A2: เติมเวรเดี่ยวให้คนที่ทำงานยังไม่ครบโควตา (ลงวันว่าง) จนครบ workQuota วัน
     (function fillToWorkQuota() {
       let guard = pool.length * days + 10;
       let progressed = true;
       while (progressed && guard-- > 0) {
         progressed = false;
-        // คนที่ยังทำงานไม่ครบโควตา เรียงจากขาดมากสุด (คนขึ้นเวรได้น้อยชนิดก่อน)
         const under = pool
           .map((s) => ({ s, deficit: workQuota - workDaysOfA(s.name) }))
           .filter((x) => x.deficit > 0)
@@ -3686,16 +3738,13 @@ function autoAssign(sched, opts = {}) {
         for (const { s } of under) {
           const name = s.name;
           const avail = (s.availableForSlotType || CLIN).filter((x) => CLIN.includes(x));
-          // รายการวันว่าง
           const offDays = [];
           for (let d = 1; d <= days; d++) if (isDayOff(name, d)) offDays.push(d);
-          // เลือกวัน+เวรที่ "ยังขาดกำลังคนมากสุด" ก่อน (ช่วย coverage ไปในตัว) แล้วค่อยที่ไหนก็ได้
           let best = null, bestScore = -Infinity;
           for (const d of offDays) {
             for (const sym of avail) {
               if (!canPlaceSingle(s, d, sym)) continue;
               const deficitCov = (staffPerShift[sym] || 0) - coverageCount(d, sym);
-              // ให้ความสำคัญเวรที่ยังขาด (deficitCov > 0) + ยึดดึกก่อนเล็กน้อย
               const score = (deficitCov > 0 ? 100 : 0) + deficitCov + (sym === "ด" ? 1 : 0);
               if (score > bestScore) { bestScore = score; best = { d, sym }; }
             }
@@ -3704,7 +3753,7 @@ function autoAssign(sched, opts = {}) {
             grid[name][best.d - 1] = best.sym;
             load.set(name, (load.get(name) || 0) + 1);
             progressed = true;
-            break; // คำนวณใหม่ (coverage/quota เปลี่ยน)
+            break;
           }
         }
       }
@@ -3719,18 +3768,11 @@ function autoAssign(sched, opts = {}) {
         if (got < need) recompUnfilled.push({ day: d, sym, need, got });
       }
     }
-    // นับเวร clinical ปกติ (ไม่รวม OT) ของคนในเดือนนี้ — ใช้ตัดสินว่าเวรที่เพิ่มควรเป็น OT
-    const regularShiftsOf = (name) => {
-      let n = 0;
-      for (let k = 1; k <= days; k++) n += partsOf(grid[name][k - 1]).filter((p) => CLIN.includes(p)).length;
-      return n;
-    };
     for (const u of recompUnfilled) {
       const { day: d, sym } = u;
       let have = coverageCount(d, sym);
       const need = staffPerShift[sym] || 0;
-      // ข้อ 5: เติมกำลังคนที่ขาดด้วย "ควบเวร" บนวันทำงาน — ถ้าคนนั้นมีเวรปกติครบโควตาแล้ว
-      //        ส่วนที่เพิ่มให้นับเป็น OT (OTช/OTบ/OTด) ไม่งั้นเป็นเวรปกติ
+      // เติมกำลังคนที่ยังขาด ด้วยการ "ควบเวร" บนวันทำงาน (เวรที่ 2 ของวัน จะถูกทำเป็น OT ใน STEP C)
       if (have < need) {
         const doublers = pool
           .filter((s) => {
@@ -3740,54 +3782,29 @@ function autoAssign(sched, opts = {}) {
           .sort((a, b) => load.get(a.name) - load.get(b.name));
         for (const s of doublers) {
           if (have >= need) break;
-          const asOT = regularShiftsOf(s.name) >= workQuota; // เกินโควตา → OT
-          addPart(s.name, d, asOT ? ("OT" + sym) : sym);
-          if (!asOT) load.set(s.name, load.get(s.name) + 1);
-          have++;
-        }
-      }
-      // ถ้ายังขาด → ลง OT ให้คนที่ทำงานอยู่แล้ว (เผื่อ doublers รอบแรกไม่พอ)
-      if (have < need) {
-        const otCode = "OT" + sym;
-        const otCands = pool
-          .filter((s) => {
-            const t = grid[s.name][d - 1];
-            if (!(t && t !== "off" && clinCount(t) >= 1)) return false;
-            return canAddShift(s, d, sym);
-          })
-          .sort((a, b) => load.get(a.name) - load.get(b.name));
-        for (const s of otCands) {
-          if (have >= need) break;
-          addPart(s.name, d, otCode);
+          addPart(s.name, d, sym); // STEP C จะเปลี่ยนเวรที่ 2 ของวันเป็น OT ให้เอง
           have++;
         }
       }
       u.got = have;
     }
 
-    // ----- STEP C (ข้อ 6): เวรปกติต่อคน = โควตาวันทำงาน (workQuota) · ส่วนเกิน → OT -----
-    //   ไล่ตามวัน: เวร clinical "เวรแรกของวัน" ที่ยังไม่เกินโควตา = เวรปกติ
-    //   เวรที่เกินโควตา + เวรที่ 2 ของวัน (ควบ) = OT (OTช/OTบ/OTด) เพื่อให้ "รวมเวรปกติ" = workQuota
+    // ----- STEP C (ข้อ 6): เวรแรกของแต่ละวัน = เวรปกติ · เวรที่ 2 ของวัน (ควบ) = OT -----
+    //   หลัง STEP A ทุกคนมีวันทำงาน ≤ workQuota อยู่แล้ว → เวรแรกของวันเป็นเวรปกติเสมอ
+    //   แปลงเฉพาะ "เวรที่ 2 ของวัน" เป็น OT (ไม่แตะเวรแรก/ไม่กินวันหยุด)
     const toOT = { "ช": "OTช", "บ": "OTบ", "ด": "OTด" };
+    const ORDER2 = { "ช": 0, "บ": 1, "ด": 2, "OTช": 3, "OTบ": 4, "OTด": 5 };
     for (const s of pool) {
       const name = s.name;
-      let regularUsed = 0;
       for (let d = 1; d <= days; d++) {
         const code = grid[name][d - 1];
         if (!code || code === "off") continue;
-        const parts2 = partsOf(code);
         let firstClinSeen = false;
-        const nextParts = parts2.map((p) => {
+        const nextParts = partsOf(code).map((p) => {
           if (!CLIN.includes(p)) return p; // off/ลา/อบรม/OT เดิม — คงไว้
-          if (!firstClinSeen) {
-            firstClinSeen = true;
-            if (regularUsed < workQuota) { regularUsed++; return p; } // เวรปกติเวรแรกของวัน
-            return toOT[p]; // เกินโควตาวันทำงาน → OT
-          }
-          return toOT[p]; // เวรที่ 2 ของวัน (ควบ) → OT เสมอ
+          if (!firstClinSeen) { firstClinSeen = true; return p; } // เวรแรกของวัน = เวรปกติ
+          return toOT[p]; // เวรที่ 2 ของวัน (ควบ) → OT
         });
-        // เรียงลำดับ ช,บ,ด,OT* ให้อ่านง่าย
-        const ORDER2 = { "ช": 0, "บ": 1, "ด": 2, "OTช": 3, "OTบ": 4, "OTด": 5 };
         nextParts.sort((a, b) => (ORDER2[a] ?? 9) - (ORDER2[b] ?? 9));
         grid[name][d - 1] = nextParts.join("+");
       }
