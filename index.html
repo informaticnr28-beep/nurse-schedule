@@ -1045,12 +1045,14 @@ function checkStaffing(sched, out, passed) {
   let s2fail = 0;
   for (let d = 1; d <= calendar.days; d++) {
     for (const sym of CLINICAL) {
-      const on = onShift(sched, d, sym);
-      if (on.length === 0) continue; // ไม่มีใครขึ้น (ว่าง) — ข้าม sym นี้
+      const onAll = onShift(sched, d, sym);
+      if (onAll.length === 0) continue; // ไม่มีใครขึ้น (ว่าง) — ข้าม sym นี้
+      // ข้อ 2: Training ไม่นับเป็นอัตรากำลังจริง (จัดเวรได้ แต่ไม่คิดเป็นกำลังคนตามข้อกำหนด)
+      const on = onAll.filter((s) => s.level !== "Training");
       const rn = on.filter((s) => s.profession === "RN");
       const pn = on.filter((s) => s.profession === "PN");
 
-      // S-1: จำนวนคนรวมขั้นต่ำ
+      // S-1: จำนวนคนรวมขั้นต่ำ (ไม่นับ Training)
       const need = config.staffPerShift[sym];
       if (need != null && on.length < need) {
         out.push(
@@ -1079,23 +1081,25 @@ function checkStaffing(sched, out, passed) {
         );
       }
 
-      // S-2: ต้องมี Incharge อย่างน้อย 1 คน
-      // incharge ที่ assign แล้ว (Q1) หรือ fallback: มีคน canBeIncharge อยู่ในเวร
-      const inchargeName = incharge[`${d}|${sym}`];
-      const hasAssignedIncharge =
-        inchargeName && on.some((s) => s.name === inchargeName);
-      const hasInchargeCapable = on.some(
-        (s) => s.canBeIncharge && s.profession === "RN"
-      );
-      if (!hasAssignedIncharge && !hasInchargeCapable) {
-        s2fail++;
-        out.push(
-          V("S-2", "HARD", `${thDate(d)} เวร${SLOT_TH[sym]} ไม่มีผู้ที่เป็นหัวหน้าเวร (Incharge) ได้`, {
-            day: d,
-            sym,
-            fix: suggestIncharge(sched, d, sym),
-          })
+      // S-2: ต้องมี Incharge อย่างน้อย 1 คน — ข้อ 4: ตรวจเฉพาะเวรที่มี RN เท่านั้น
+      //   (PN/Clerk/Sup ไม่ต้อง assign incharge — incharge เป็นของ RN)
+      if (rn.length > 0) {
+        const inchargeName = incharge[`${d}|${sym}`];
+        const hasAssignedIncharge =
+          inchargeName && on.some((s) => s.name === inchargeName);
+        const hasInchargeCapable = on.some(
+          (s) => s.canBeIncharge && s.profession === "RN"
         );
+        if (!hasAssignedIncharge && !hasInchargeCapable) {
+          s2fail++;
+          out.push(
+            V("S-2", "HARD", `${thDate(d)} เวร${SLOT_TH[sym]} ไม่มีผู้ที่เป็นหัวหน้าเวร (Incharge) ได้`, {
+              day: d,
+              sym,
+              fix: suggestIncharge(sched, d, sym),
+            })
+          );
+        }
       }
 
       // S-3: Novice ไม่เกิน config.maxNovicePerShift
@@ -3450,9 +3454,9 @@ function autoAssign(sched, opts = {}) {
   }
 
   const unfilled = [];
-  // นับว่าแต่ละวัน/เวร มีกำลังคน (รวม OT) เท่าไร
+  // นับว่าแต่ละวัน/เวร มีกำลังคน (รวม OT) เท่าไร — ข้อ 2: ไม่นับ Training เป็นอัตรากำลัง
   const coverageCount = (d, sym) =>
-    pool.filter((s) => partsOf(grid[s.name][d - 1]).some((p) => p === sym || p === "OT" + sym)).length;
+    pool.filter((s) => s.level !== "Training" && partsOf(grid[s.name][d - 1]).some((p) => p === sym || p === "OT" + sym)).length;
 
   for (let d = 1; d <= days; d++) {
     for (const sym of SLOT_ORDER) {
@@ -3484,21 +3488,21 @@ function autoAssign(sched, opts = {}) {
         for (let k = 1; k < d; k++) if (hasSym(grid[nm][k - 1], "ด")) n++;
         return n;
       };
+      // จำนวนชนิดเวรที่คนนี้ขึ้นได้ (คนที่ขึ้นได้น้อยชนิด = ตัวเลือกน้อย ควรได้ก่อน)
+      const availCountOf = (s) => (s.availableForSlotType || CLIN).filter((x) => CLIN.includes(x)).length;
       const rest = pool
         .filter((s) => !chosen.includes(s) && canWork(s, d, sym))
         .sort((a, b) => {
-          // ยึด "สมดุลเวรดึก" เป็นหลักก่อนเสมอ (ดึกหนักสุด ควรเท่ากันที่สุด)
-          //   - จัดเวรดึก: คนที่ได้ดึกน้อยสุดก่อน
-          //   - จัดเวรเช้า/บ่าย: คนที่ "ดึกเยอะ" ควรได้เวรกลางวันน้อยลง → ให้คนดึกน้อยกว่าได้ก่อน
+          // ข้อ 5: คนที่ขึ้นเวรได้น้อยชนิด (เช่น เช้าอย่างเดียว) มีตัวเลือกน้อย → จัดก่อน
+          //   เพื่อให้คนเหล่านี้ได้เวรของตัวเองครบ ไม่ถูกเฉลี่ยไปกับคนที่ขึ้นได้หลายเวร
+          const ca = availCountOf(a), cb = availCountOf(b);
+          if (ca !== cb) return ca - cb;
+          // ยึดสมดุลเวรดึกก่อน (เฉพาะตอนจัดเวรดึก) — ดึกน้อยสุดได้ก่อน
           const na = nightCountOf(a.name), nb = nightCountOf(b.name);
-          if (sym === "ด") {
-            if (na !== nb) return na - nb; // ดึกน้อยสุดได้ดึกก่อน
-          }
-          // สมดุลเวร sym ปัจจุบัน (เช้า/บ่าย/ดึก) ภายในกลุ่ม level
+          if (sym === "ด" && na !== nb) return na - nb;
+          // สมดุลเวร sym ปัจจุบัน (เช้า/บ่าย/ดึก) ภายในกลุ่มที่ขึ้นได้เท่ากัน
           const sa = symCountOf(a.name), sb = symCountOf(b.name);
           if (sa !== sb) return sa - sb;
-          // เวรกลางวัน: ถ่วงด้วยจำนวนดึก (คนดึกเยอะได้กลางวันทีหลัง)
-          if (sym !== "ด" && na !== nb) return na - nb;
           // ภาระงานรวมน้อยกว่าก่อน
           const la = load.get(a.name), lb = load.get(b.name);
           if (la !== lb) return la - lb;
@@ -3747,6 +3751,34 @@ function autoAssign(sched, opts = {}) {
         }
       }
       u.got = have;
+    }
+
+    // ----- STEP C (ข้อ 6): เวรปกติต่อคน = โควตาวันทำงาน (workQuota) · ส่วนเกิน → OT -----
+    //   ไล่ตามวัน: เวร clinical "เวรแรกของวัน" ที่ยังไม่เกินโควตา = เวรปกติ
+    //   เวรที่เกินโควตา + เวรที่ 2 ของวัน (ควบ) = OT (OTช/OTบ/OTด) เพื่อให้ "รวมเวรปกติ" = workQuota
+    const toOT = { "ช": "OTช", "บ": "OTบ", "ด": "OTด" };
+    for (const s of pool) {
+      const name = s.name;
+      let regularUsed = 0;
+      for (let d = 1; d <= days; d++) {
+        const code = grid[name][d - 1];
+        if (!code || code === "off") continue;
+        const parts2 = partsOf(code);
+        let firstClinSeen = false;
+        const nextParts = parts2.map((p) => {
+          if (!CLIN.includes(p)) return p; // off/ลา/อบรม/OT เดิม — คงไว้
+          if (!firstClinSeen) {
+            firstClinSeen = true;
+            if (regularUsed < workQuota) { regularUsed++; return p; } // เวรปกติเวรแรกของวัน
+            return toOT[p]; // เกินโควตาวันทำงาน → OT
+          }
+          return toOT[p]; // เวรที่ 2 ของวัน (ควบ) → OT เสมอ
+        });
+        // เรียงลำดับ ช,บ,ด,OT* ให้อ่านง่าย
+        const ORDER2 = { "ช": 0, "บ": 1, "ด": 2, "OTช": 3, "OTบ": 4, "OTด": 5 };
+        nextParts.sort((a, b) => (ORDER2[a] ?? 9) - (ORDER2[b] ?? 9));
+        grid[name][d - 1] = nextParts.join("+");
+      }
     }
   }
 
@@ -5621,7 +5653,7 @@ function renderStaffTable() {
   const LVLN = { Expert: "Expert", Competent: "Competent", Novice: "Novice", Training: "Training" };
   let h = `<thead><tr><th>id</th><th>ชื่อ</th><th>ประเภท</th><th>ระดับ</th><th>เวรที่ขึ้นได้</th><th title="เพดานเวรดึกต่อเดือน รายบุคคล — ว่าง = ไม่จำกัด">ดึก/เดือน</th><th>Incharge</th><th></th></tr></thead><tbody>`;
   h += STAFF.map(s => {
-    const full = { E: "Expert", C: "Competent", N: "Novice" }[s.lvl] || s.lvl;
+    const full = { E: "Expert", C: "Competent", N: "Novice", T: "Training" }[s.lvl] || s.lvl;
     const levelSel = ["Expert","Competent","Novice","Training"].map(l => `<option ${l===full?"selected":""}>${l}</option>`).join("");
     const capVal = (s.maxNightsPerMonth ?? "") === "" ? "" : s.maxNightsPerMonth;
     return `<tr><td>${s.id}</td><td>${s.name}</td><td>${s.prof||"RN"}</td>
@@ -6125,6 +6157,28 @@ if (typeof writeCfgForm === "function") { CFG_TYPE = cfgTypeSelected(); writeCfg
 // เติม select เลือกคนใน export + history
 document.getElementById("ex-who").innerHTML = STAFF.map(s => `<option value="${s.name}">${s.name} (${s.lvl})</option>`).join("");
 persist();
+
+// ---------- ข้อ 3: คง session หลัง refresh (auto-login จาก session ที่ Supabase จำไว้) ----------
+(async function restoreSessionOnLoad() {
+  try {
+    const { url, key } = sbConfig();
+    if (!url || !key) return; // ยังไม่ได้ตั้งค่าเชื่อมต่อ → แสดงหน้า login ตามปกติ
+    const client = RulesEngine.createBrowserClient(url, key);
+    SB_ADAPTER = new RulesEngine.SupabaseAdapter(client);
+    const session = await SB_ADAPTER.getSession();
+    if (!session) { SB_ADAPTER = null; return; } // ไม่มี session → หน้า login
+    let profile = await SB_ADAPTER.getProfile();
+    if (!profile) { SB_ADAPTER = null; return; } // ยังไม่ผูกหน่วย → ให้ login/สมัครตามปกติ
+    CURRENT_UNIT = profile.units || { code: "?", name: "หน่วยของฉัน" };
+    applyRole(profile.role === "admin" ? "admin" : "user");
+    const nm = profile.full_name || (session.user && session.user.email) || "";
+    document.querySelector(".masthead .unit").textContent = `${CURRENT_UNIT.name}${nm ? " · " + nm : ""}`;
+    document.body.classList.add("authed");
+    try { await loadFromCloud(); }
+    catch (e2) { console.error("loadFromCloud error:", e2); toast("โหลดข้อมูลหน่วยไม่สำเร็จ: " + e2.message); }
+    toast(`ยินดีต้อนรับกลับ${nm ? " " + nm : ""}`);
+  } catch (e) { SB_ADAPTER = null; /* เงียบ — แสดงหน้า login */ }
+})();
 </script>
 </body>
 </html>
