@@ -4626,7 +4626,20 @@ function renderPersonCalendar(name) {
   h += `</div>`;
   box.innerHTML = h;
 }
+// เติม dropdown "เลือกคน" (ex-who) ให้ตรงกับ STAFF ปัจจุบันเสมอ — คงค่าที่เลือกไว้ถ้ายังมีอยู่
+function fillExportWho() {
+  const sel = document.getElementById("ex-who"); if (!sel) return;
+  const prev = [...sel.selectedOptions].map(o => o.value);
+  sel.innerHTML = STAFF.map(s => `<option value="${s.name}">${s.name} (${s.lvl})</option>`).join("");
+  // เลือกกลับที่เคยเลือก (เฉพาะชื่อที่ยังมีใน STAFF ปัจจุบัน)
+  let restored = false;
+  [...sel.options].forEach(o => { if (prev.includes(o.value)) { o.selected = true; restored = true; } });
+  // ถ้าชื่อเดิมหายหมด (เช่น เพิ่งโหลดข้อมูลหน่วยใหม่) → เลือกคนแรกเป็นค่าตั้งต้น
+  if (!restored && sel.options.length) sel.options[0].selected = true;
+}
 function renderGrid(highlight) {
+  // ให้ dropdown เลือกคน ตรงกับ STAFF ปัจจุบันก่อนเสมอ (กันค้างชื่อ demo เก่า)
+  fillExportWho();
   // staff (user) จะเห็นตารางได้เฉพาะเดือนที่ "เผยแพร่แล้ว" เท่านั้น
   if (typeof CURRENT_ROLE !== "undefined" && CURRENT_ROLE === "user" && !PUBLISHED) {
     document.getElementById("roster").innerHTML =
@@ -4658,7 +4671,11 @@ function renderGrid(highlight) {
   let h = `<caption class="sr">ตารางเวรรายคนรายวัน ${mkLabelFull(ACTIVE_MK)}</caption><thead><tr><th class="who" scope="col">ชื่อ</th>`;
   for (let d = 1; d <= DAYS; d++) h += `<th scope="col" class="${HOLIDAYS[d] ? "hol" : isWE(d) ? "we" : ""}" title="${HOLIDAYS[d] || ""}">${d}<span class="dow">${DOW[dow(d)]}</span></th>`;
   h += `</tr></thead><tbody>`;
-  visibleStaff().forEach(s => {
+  // รายชื่อที่จะแสดง — ถ้ากรองแล้วว่าง (เช่น scope/ประเภทไม่ตรงใคร) ให้แสดงทุกคนไว้ก่อน ไม่ให้ตารางว่าง
+  let showStaff = visibleStaff();
+  if (!showStaff.length) showStaff = STAFF.slice();
+  showStaff.forEach(s => {
+    if (!GRID[s.name]) GRID[s.name] = Array(DAYS).fill("off"); // กัน row หายถ้ายังไม่มีเวร
     h += `<tr><th class="who" scope="row"><span class="lvl ${s.lvl}" title="${{E:"Expert",C:"Competent",N:"Novice"}[s.lvl]}">${s.lvl}</span>${s.name}</th>`;
     GRID[s.name].forEach((code, i) => {
       const d = i+1, key = s.name+"|"+d, cls = ["cell"];
