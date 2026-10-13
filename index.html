@@ -2728,7 +2728,7 @@ function toPrintableHTML(sched, grid, opts = {}) {
     for (let d = 1; d <= days; d++) {
       const code = row[d - 1] || "";
       const cls = parts(code).map((p) => "k-" + p).join(" ");
-      tds += `<td class="${cls}">${code === "off" ? "" : code}</td>`;
+      tds += `<td class="${cls}">${(code === "off" || code === "") ? "หยุด" : code}</td>`;
     }
     body += `<tr>${tds}</tr>`;
   }
