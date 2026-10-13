@@ -172,6 +172,17 @@
   .cal div.we { color: var(--alert); }
   .cal div.hol { background: #FBEFF1; color: var(--alert); }
   .cal div small { display: block; font-size: .7rem; line-height: 1.2; }
+  /* ปฏิทินรายบุคคล */
+  .pcal { display: grid; grid-template-columns: repeat(7, minmax(0,1fr)); gap: 4px; font-size: .9rem; }
+  .pcal .h { font-weight: 600; text-align: center; color: var(--ink-soft); padding: .2rem; }
+  .pcal .cell { min-height: 3.2rem; border: 1px solid var(--line); border-radius: var(--radius-s); padding: .25rem .35rem; background: #fff; }
+  .pcal .cell.we { background: #FBF7EC; }
+  .pcal .cell.hol { background: #FBEFF1; }
+  .pcal .cell .dnum { font-size: .72rem; color: var(--ink-soft); }
+  .pcal .cell .shift { font-weight: 700; margin-top: .15rem; }
+  .pcal .cell .shift.off { color: var(--ink-soft); font-weight: 500; }
+  .pcal .cell .shift.ot { color: #b06a00; }
+  .pcal .cell.empty { background: none; border: none; }
   .feas { border-left: 4px solid var(--ok); padding: .6rem .9rem; background: #F1F8F4; margin-bottom: .75rem; }
   .feas.bad { border-color: var(--alert); background: #FCEFF1; }
   .feas strong { font-size: 1.05rem; }
@@ -224,6 +235,9 @@
   body.authed .login-overlay { display: none; }
   /* ซ่อน tab/section ที่เฉพาะ admin เมื่อเป็น user */
   body.role-user [data-admin-only] { display: none !important; }
+  /* องค์ประกอบเฉพาะ user — ซ่อนไว้โดยปริยาย (admin) แสดงเฉพาะตอน role-user */
+  [data-user-only] { display: none; }
+  body.role-user [data-user-only] { display: flex; }
   .rolepill { font-size: .8rem; font-weight: 600; padding: .1rem .55rem; border-radius: 999px; background: #E6E9EE; color: var(--ink); }
   .rolepill.admin { background: #DCEFE5; color: var(--ok); }
   .chips { display: flex; flex-wrap: wrap; gap: .4rem; }
@@ -445,10 +459,12 @@
         <p class="hint" style="margin:0 0 .75rem">ข้อมูลเก็บในเครื่องนี้เป็นหลัก (เร็ว) · กด <b>Backup</b> เพื่อสำรองขึ้น Google Sheets · กด <b>ดึง</b> เพื่อโหลดจาก Sheets ทับข้อมูลในเครื่อง · ตั้งค่า URL จากคู่มือ <code>docs/deploy-google-sheets.md</code></p>
         <div class="field"><label for="gs-url">Web App URL (จาก Apps Script)</label><input id="gs-url" type="url" style="width:100%" placeholder="https://script.google.com/macros/s/..../exec"></div>
         <div class="field"><label for="gs-token">Token (ตรงกับที่ตั้งใน Apps Script)</label><input id="gs-token" type="text" style="width:100%" placeholder="ข้อความลับ"></div>
+        <div class="field"><label for="gs-notify-email">อีเมลรับแจ้งเตือนคำขอแลกเวร</label><input id="gs-notify-email" type="text" style="width:100%" placeholder="เช่น head@hospital.go.th (หลายคนคั่นด้วย ,)"><span class="hint">เมื่อ user ส่งคำขอแลกเวร ระบบจะแจ้งเตือนไปอีเมลนี้ผ่าน Google Sheets · แก้ไขได้ตลอด</span></div>
         <div style="display:flex;gap:.5rem;flex-wrap:wrap">
           <button class="ghost" type="button" id="gs-test">ทดสอบการเชื่อมต่อ</button>
           <button class="primary" type="button" id="gs-backup">⬆ Backup ขึ้น Sheets</button>
           <button class="ghost" type="button" id="gs-pull">⬇ ดึงจาก Sheets</button>
+          <button class="ghost" type="button" id="gs-test-notify">✉ ทดสอบส่งอีเมลแจ้งเตือน</button>
         </div>
         <p class="hint" id="gs-status" aria-live="polite" style="margin:.6rem 0 0">ยังไม่ได้เชื่อมต่อ</p>
       </div>
@@ -473,6 +489,14 @@
 
 <!-- ============ 3. GRID ============ -->
 <section id="p-grid" role="tabpanel" aria-labelledby="t-grid">
+  <!-- แถบเลือกเดือนสำหรับ user (เห็นเฉพาะเดือนที่เผยแพร่แล้ว) -->
+  <div class="panel" data-user-only style="display:flex;flex-wrap:wrap;gap:.6rem;align-items:center;margin-bottom:1rem;background:#f0f6ff;border:1px solid #cfe0f5">
+    <div class="field" style="margin:0">
+      <label for="sched-month-user" style="font-weight:600">เลือกเดือน</label>
+      <select id="sched-month-user" style="min-width:11rem"></select>
+    </div>
+    <span class="hint">เลือกเดือนที่หัวหน้าเผยแพร่แล้วเพื่อดูตารางเวร/แลกเวร</span>
+  </div>
   <div class="panel" data-admin-only style="display:flex;flex-wrap:wrap;gap:.6rem;align-items:center;margin-bottom:1rem;background:#f0f6ff;border:1px solid #cfe0f5">
     <div class="field" style="margin:0">
       <label for="sched-month" style="font-weight:600">เดือนที่จัดเวร</label>
@@ -546,6 +570,7 @@
   <div class="cols">
     <div>
       <div class="grid-wrap"><table class="roster" id="roster"></table></div>
+      <div id="person-cal" hidden></div>
       <div class="legend">
         <span><i style="background:var(--morning)"></i>เช้า ช</span>
         <span><i style="background:var(--afternoon)"></i>บ่าย บ</span>
@@ -558,7 +583,7 @@
         <span><span style="color:var(--alert);text-decoration:underline wavy;font-weight:600">ตัวแดง</span> ไม่ได้ตามคำขอ <span class="rule hard">R-5</span></span>
       </div>
     </div>
-    <aside class="panel">
+    <aside class="panel" data-admin-only>
       <h2>ผลตรวจกฎ</h2>
       <p class="hint" style="margin:0 0 .8rem">ตรวจจากตารางที่แสดงอยู่ เลือกรายการเพื่อดูช่องในตาราง · ปุ่ม <b>เผยแพร่ตาราง</b> อยู่ที่แถบเมนูด้านบน</p>
       <div id="issues"></div>
@@ -632,7 +657,7 @@
 <!-- ============ 6. SWAP (แลกเวร) ============ -->
 <section id="p-swap" role="tabpanel" aria-labelledby="t-swap" hidden>
   <h2>แลกเวร</h2>
-  <p class="lede">เลือกคนที่ต้องการแลก (เพิ่มได้หลายคน/หลายชั้น) ระบบแสดง <b>เวรปัจจุบัน</b> อัตโนมัติ แล้วเลือก <b>เวรใหม่</b> ที่ต้องการเอง · ระบบตรวจว่าทุกเวรทุกวันยังมีคนครบ ถ้าไม่ครบจะเตือนและ<b>บันทึกไม่ได้</b> · ผู้อนุมัติกด “ตรวจสอบและส่งคำขอ” เพื่ออัปเดตตาราง</p>
+  <p class="lede">เลือกคนที่ต้องการแลก ระบบแสดง <b>เวรปัจจุบัน</b> อัตโนมัติ แล้วเลือก <b>เวรใหม่</b> ที่ต้องการเอง · กด <b>ส่งคำขอ</b> คำขอจะไปที่หัวหน้าหน่วย (admin) เพื่อ <b>อนุมัติ/ปฏิเสธ</b> · เมื่ออนุมัติแล้ว admin จะแก้ไขตารางเวรเอง (ไม่ตรวจกฎก่อนส่งคำขอ)</p>
   <div class="cols">
     <form class="panel" id="swap-form" novalidate>
       <h2 style="margin-bottom:.8rem">สร้างคำขอแลกเวร</h2>
@@ -646,16 +671,17 @@
         <label for="sw-reason">เหตุผล (ไม่บังคับ)</label>
         <input id="sw-reason" type="text" style="width:100%" placeholder="เช่น ติดธุระ">
       </div>
-      <button class="primary" type="submit">ตรวจและส่งคำขอ</button>
+      <button class="primary" type="submit">ส่งคำขอแลกเวร</button>
     </form>
     <aside class="panel">
-      <h2 style="margin-bottom:.6rem">ผลตรวจก่อนอนุมัติ</h2>
-      <div id="sw-preview"><p class="hint">เลือกคน/เวรใหม่ แล้วกด “ตรวจและส่งคำขอ” เพื่อดูผลตรวจ (ความครบของกำลังคน + กฎ)</p></div>
+      <h2 style="margin-bottom:.6rem">สถานะคำขอ</h2>
+      <div id="sw-preview"><p class="hint">เลือกคน/เวรใหม่ แล้วกด “ส่งคำขอแลกเวร” — คำขอจะไปที่หัวหน้าหน่วยเพื่ออนุมัติ</p></div>
     </aside>
   </div>
   <div class="panel" style="margin-top:1.25rem">
-    <h2 style="margin-bottom:.6rem">บันทึกการแลกเวร (ตรวจสอบย้อนหลังได้)</h2>
-    <table class="plain" id="swap-log"><thead><tr><th>เวลา</th><th>รูปแบบ</th><th>รายละเอียด</th><th>สถานะ</th><th>ผู้อนุมัติ</th><th>หมายเหตุ</th></tr></thead><tbody></tbody></table>
+    <h2 style="margin-bottom:.6rem">คำขอแลกเวร <span id="sw-req-month" class="hint"></span></h2>
+    <p class="hint" data-admin-only style="margin:0 0 .6rem">กด <b>อนุมัติ</b> หรือ <b>ปฏิเสธ</b> เพื่ออัปเดตสถานะให้ผู้ขอเห็น · เมื่ออนุมัติแล้ว ให้แก้ไขตารางเวรด้วยตนเองที่หน้า “ตารางเวร”</p>
+    <table class="plain" id="swap-req"><thead><tr><th>เวลา</th><th>ผู้ขอ</th><th>รายละเอียด</th><th>เหตุผล</th><th>สถานะ</th><th></th></tr></thead><tbody></tbody></table>
   </div>
 </section>
 
@@ -4578,6 +4604,28 @@ function visibleStaff() {
   }
   return base;
 }
+// ปฏิทินรายบุคคล — แสดงเวรของคนเดียวแบบปฏิทินเดือน (ข้อ 3)
+function renderPersonCalendar(name) {
+  const box = document.getElementById("person-cal"); if (!box) return;
+  const row = GRID[name] || [];
+  const lbl = (code) => {
+    if (!code || code === "off") return { txt: "หยุด", cls: "off" };
+    const parts2 = String(code).split("+");
+    const hasOT = parts2.some(p => p.startsWith("OT"));
+    const txt = parts2.map(p => (typeof SW_SLOT !== "undefined" && SW_SLOT[p]) ? SW_SLOT[p] : p).join(" + ");
+    return { txt, cls: hasOT ? "ot" : "" };
+  };
+  let h = `<div style="font-weight:700;margin:.2rem 0 .5rem">ปฏิทินเวร ${name} · ${mkLabelFull(ACTIVE_MK)}</div><div class="pcal">`;
+  h += DOW.map(x => `<div class="h">${x}</div>`).join("");
+  for (let i = 0; i < dow(1); i++) h += `<div class="cell empty"></div>`;
+  for (let d = 1; d <= DAYS; d++) {
+    const cls = HOLIDAYS[d] ? "hol" : isWE(d) ? "we" : "";
+    const info = lbl(row[d - 1]);
+    h += `<div class="cell ${cls}"><div class="dnum">${d}${HOLIDAYS[d] ? " ★" : ""}</div><div class="shift ${info.cls}">${info.txt}</div></div>`;
+  }
+  h += `</div>`;
+  box.innerHTML = h;
+}
 function renderGrid(highlight) {
   // staff (user) จะเห็นตารางได้เฉพาะเดือนที่ "เผยแพร่แล้ว" เท่านั้น
   if (typeof CURRENT_ROLE !== "undefined" && CURRENT_ROLE === "user" && !PUBLISHED) {
@@ -4589,6 +4637,21 @@ function renderGrid(highlight) {
       `</td></tr></tbody>`;
     return;
   }
+  // ข้อ 3: มุมมองรายบุคคล (เลือก 1 คน) → แสดงเป็นปฏิทิน · มุมมองอื่นเป็นตารางเหมือนเดิม
+  const pcalBox = document.getElementById("person-cal");
+  const rosterEl = document.getElementById("roster");
+  const scopeEl = document.getElementById("ex-scope");
+  if (pcalBox && scopeEl && scopeEl.value === "person") {
+    const sel = [...(document.getElementById("ex-who")?.selectedOptions || [])].map(o => o.value);
+    if (sel.length === 1) {
+      renderPersonCalendar(sel[0]);
+      pcalBox.hidden = false;
+      rosterEl.hidden = true;
+      return;
+    }
+  }
+  if (pcalBox) pcalBox.hidden = true;
+  if (rosterEl) rosterEl.hidden = false;
   const reqOff = new Set(OFF_REQ.map(([n,d]) => n+"|"+d));
   const reqWork = new Map(WORK_REQ.map(([n,d,s]) => [n+"|"+d, s]));
   const c = cfg();
@@ -4856,12 +4919,27 @@ document.getElementById("edit-done").addEventListener("click", () => {
 });
 // month selector + เพิ่มเดือน
 function renderMonthSelector() {
-  const sel = document.getElementById("sched-month"); if (!sel) return;
-  const mks = Object.keys(MONTHS).sort();
-  sel.innerHTML = mks.map(mk => `<option value="${mk}">${mkLabelFull(mk)}${MONTHS[mk].published ? " · เผยแพร่แล้ว" : ""}</option>`).join("");
-  sel.value = ACTIVE_MK;
+  const sel = document.getElementById("sched-month");
+  if (sel) {
+    const mks = Object.keys(MONTHS).sort();
+    sel.innerHTML = mks.map(mk => `<option value="${mk}">${mkLabelFull(mk)}${MONTHS[mk].published ? " · เผยแพร่แล้ว" : ""}</option>`).join("");
+    sel.value = ACTIVE_MK;
+  }
+  renderUserMonthSelector();
+}
+// แถบเลือกเดือนของ user — แสดงเฉพาะเดือนที่ "เผยแพร่แล้ว"
+function renderUserMonthSelector() {
+  const sel = document.getElementById("sched-month-user"); if (!sel) return;
+  const published = Object.keys(MONTHS).filter(mk => MONTHS[mk].published).sort();
+  if (!published.length) {
+    sel.innerHTML = `<option value="">— ยังไม่มีเดือนที่เผยแพร่ —</option>`;
+    return;
+  }
+  sel.innerHTML = published.map(mk => `<option value="${mk}">${mkLabelFull(mk)}</option>`).join("");
+  if (published.includes(ACTIVE_MK)) sel.value = ACTIVE_MK;
 }
 document.getElementById("sched-month")?.addEventListener("change", e => { activateMonth(e.target.value); renderMonthSelector(); });
+document.getElementById("sched-month-user")?.addEventListener("change", e => { if (e.target.value) { activateMonth(e.target.value); renderMonthSelector(); } });
 document.getElementById("add-month")?.addEventListener("click", () => {
   // เพิ่มเดือนถัดจากเดือนล่าสุดในระบบ
   const mks = Object.keys(MONTHS).sort();
@@ -5568,83 +5646,93 @@ function updateSwapFromTo() {
   box.innerHTML = lines.join("<br>");
 }
 
-function renderSwapPreview(req, v) {
-  const curCode = (name, day) => slotName((GRID[name] || [])[day - 1] || "off");
-  const legsTxt = req.legs.map(l => `${l.name} วันที่ ${l.day} (${curCode(l.name, l.day)} → ${slotName(l.newCode)})`).join(" · ");
-  let h = `<p><b>แลกเวร:</b> ${legsTxt}</p>`;
-  // ความครบของกำลังคน (coverage)
-  if (!v.coverage.ok) {
-    h += `<div class="feas bad" style="margin:.6rem 0"><b>⛔ สลับไม่ครบ — บันทึกไม่ได้</b><br>มีเวรที่คนไม่ครบ ${v.coverage.shortfalls.length} รายการ</div>`;
-    h += `<ul class="issues">${v.coverage.shortfalls.slice(0, 12).map(s => `<li><button type="button" disabled><span class="rule hard">กำลังคน</span><span class="what">วันที่ ${s.day} เวร${slotName(s.sym)} มี ${s.got}/${s.need} คน</span></button></li>`).join("")}</ul>`;
-  } else {
-    h += `<div class="feas" style="margin:.6rem 0"><b>✓ กำลังคนครบทุกเวรทุกวัน</b></div>`;
-  }
-  // กฎ HARD อื่น ๆ ที่เกิดใหม่ (ไม่รวม coverage)
-  const otherHard = v.newHard.filter(x => x.code !== "COVER");
-  if (otherHard.length) {
-    h += `<p class="hint" style="margin-top:.5rem">ผิดกฎบังคับอื่น ${otherHard.length} รายการ (override ได้โดยผู้อนุมัติ):</p>`;
-    h += `<ul class="issues">${otherHard.map(x => `<li><button type="button"><span class="rule hard">${x.code}</span><span class="what">${x.message}</span></button></li>`).join("")}</ul>`;
-  }
-  if (v.newSoft.length) {
-    h += `<p class="hint" style="margin-top:.5rem">ข้อสังเกต (เตือน):</p><ul class="issues">${v.newSoft.map(x => `<li><button type="button"><span class="rule soft">${x.code}</span><span class="what">${x.message}</span></button></li>`).join("")}</ul>`;
-  }
-  h += `<div style="display:flex;gap:.5rem;margin-top:.8rem;flex-wrap:wrap">`;
-  if (!v.coverage.ok) {
-    // สลับไม่ครบ → บล็อกเด็ดขาด ไม่มีปุ่มส่งคำขอ
-    h += `<span class="hint" style="color:var(--alert)">แก้ไขให้ครบทุกเวรก่อน จึงจะส่งคำขอได้</span>`;
-  } else if (otherHard.length) {
-    h += `<button class="primary" id="sw-override" style="background:var(--alert);border-color:var(--alert)">ตรวจสอบและส่งคำขอ (override กฎบังคับ)</button>`;
-  } else {
-    h += `<button class="primary" id="sw-accept">ตรวจสอบและส่งคำขอ</button>`;
-  }
-  h += `<button class="ghost" id="sw-reject">ยกเลิก</button></div>`;
-  const box = document.getElementById("sw-preview"); box.innerHTML = h;
-  box.querySelector("#sw-accept")?.addEventListener("click", () => doAccept(false));
-  box.querySelector("#sw-override")?.addEventListener("click", () => doAccept(true));
-  box.querySelector("#sw-reject")?.addEventListener("click", doReject);
+/* ---------------- swap requests (ส่งคำขอ → admin อนุมัติ/ปฏิเสธ) ---------------- */
+// SWAP_REQS: คำขอแลกเวรทุกเดือน · เก็บใน localStorage + sync ขึ้น cloud (ใน persist)
+let SWAP_REQS = [];
+let _swSeq = 0;
+const swUid = () => `sw-${Date.now().toString(36)}-${(_swSeq++).toString(36)}`;
+function persistSwapReqs() {
+  try { if (typeof localStorage !== "undefined") localStorage.setItem("nurse:swapreqs", JSON.stringify(SWAP_REQS)); } catch (e) {}
+}
+function restoreSwapReqs() {
+  try { if (typeof localStorage !== "undefined") { const s = localStorage.getItem("nurse:swapreqs"); if (s) SWAP_REQS = JSON.parse(s); } } catch (e) {}
 }
 
-function doAccept(override) {
-  try {
-    RulesEngine.acceptManualSwap(STORE, pendingReq, { decidedBy: "ผู้อนุมัติ (mockup)", override });
-    for (const name of Object.keys(STORE.current)) GRID[name] = STORE.current[name].slice();
-    toast(`ส่งคำขอและอัปเดตตารางแล้ว ${override ? "(override กฎบังคับ)" : ""}`);
-    pendingReq = null;
-    document.getElementById("sw-preview").innerHTML = `<p class="hint">แลกเวรเรียบร้อย — ดูผลที่ตารางเวร เวรใหม่แสดงบนตารางแล้ว</p>`;
-    renderGrid(); renderIssues(); renderSummary(); renderSwapLog();
-  } catch (e) { toast(e.message); }
-}
-function doReject() {
-  pendingReq = null;
-  document.getElementById("sw-preview").innerHTML = `<p class="hint">ยกเลิกคำขอแล้ว</p>`;
-}
-
+// ส่งคำขอ (user/admin ก็ส่งได้) — ไม่ตรวจกฎ ไม่แก้ตาราง
 document.getElementById("swap-form").addEventListener("submit", e => {
   e.preventDefault();
   if (!PUBLISHED) {
-    document.getElementById("sw-preview").innerHTML = `<div class="feas"><b>ยังแลกเวรไม่ได้</b><br>${mkLabelFull(ACTIVE_MK)} ยังไม่เผยแพร่ · การแลกเวรเปิดเป็นรายเดือนหลังเผยแพร่ตารางเดือนนั้น<br>ไปที่หน้า “ตารางเวร” เลือกเดือน แล้วกด “เผยแพร่ตาราง” ก่อน</div>`;
-    toast(`${mkLabelFull(ACTIVE_MK)} ยังไม่เผยแพร่ — แลกเวรเป็นรายเดือนหลังเผยแพร่`);
+    document.getElementById("sw-preview").innerHTML = `<div class="feas"><b>ยังขอแลกเวรไม่ได้</b><br>${mkLabelFull(ACTIVE_MK)} ยังไม่เผยแพร่ · การแลกเวรเปิดหลังเผยแพร่ตารางเดือนนั้น</div>`;
+    toast(`${mkLabelFull(ACTIVE_MK)} ยังไม่เผยแพร่`);
     return;
   }
   const legs = readLegs();
   if (!legs.length) { toast("เลือกอย่างน้อย 1 คน/เวร"); return; }
-  try {
-    pendingReq = RulesEngine.makeManualSwap({ legs, requestedBy: legs[0].name, reason: document.getElementById("sw-reason").value });
-    const v = RulesEngine.validateManualSwap(STORE, pendingReq);
-    renderSwapPreview(pendingReq, v);
-  } catch (err) { toast(err.message); }
+  const curCode = (name, day) => slotName((GRID[name] || [])[day - 1] || "off");
+  // แนบ "เวรปัจจุบัน" ของแต่ละ leg ไว้ในคำขอ (เผื่อตารางเปลี่ยนภายหลัง)
+  const legsFull = legs.map(l => ({ name: l.name, day: l.day, from: (GRID[l.name] || [])[l.day - 1] || "off", newCode: l.newCode }));
+  const req = {
+    id: swUid(), monthKey: ACTIVE_MK, legs: legsFull,
+    requestedBy: (typeof CURRENT_STAFF !== "undefined" && CURRENT_STAFF) ? CURRENT_STAFF : legs[0].name,
+    reason: document.getElementById("sw-reason").value || "",
+    status: "pending", requestedAt: Date.now(), decidedBy: null, decidedAt: null,
+  };
+  SWAP_REQS.push(req);
+  persistSwapReqs(); persist();
+  if (typeof notifySwapRequest === "function") notifySwapRequest(req); // แจ้งเตือน admin ทางอีเมล (ถ้าตั้งค่าไว้)
+  const legsTxt = legsFull.map(l => `${l.name} วันที่ ${l.day} (${slotName(l.from)} → ${slotName(l.newCode)})`).join("<br>");
+  document.getElementById("sw-preview").innerHTML =
+    `<div class="feas"><b>✓ ส่งคำขอแล้ว — รอหัวหน้าหน่วยอนุมัติ</b><br>${legsTxt}</div>`;
+  toast("ส่งคำขอแลกเวรแล้ว รอหัวหน้าหน่วยอนุมัติ");
+  renderSwapReqs();
 });
 
-function renderSwapLog() {
+// ตารางคำขอแลกเวรของเดือนที่กำลังแสดง · admin เห็นปุ่มอนุมัติ/ปฏิเสธ · user เห็นสถานะ
+function renderSwapReqs() {
+  const mlabel = document.getElementById("sw-req-month");
+  if (mlabel) mlabel.textContent = `· ${mkLabelFull(ACTIVE_MK)}`;
+  const tbody = document.querySelector("#swap-req tbody"); if (!tbody) return;
   const fmt = t => new Date(t).toLocaleString("th-TH", { hour12: false });
-  const rows = STORE.swapLog.map(r => {
-    const legsTxt = r.legs.map(l => `${l.name}@${l.day}${l.newCode ? "→" + slotName(l.newCode) : ""}`).join(" · ");
-    const st = r.status === "accepted" ? `<span class="st-ok">อนุมัติ${r.override ? " (override)" : ""}</span>` : `<span class="st-no">ปฏิเสธ</span>`;
-    const note = r.override ? `override กฎ ${r.validation?.newHard?.map(h => h.code).join(", ") || ""}` : (r.rejectReason || "");
-    return `<tr><td>${fmt(r.decidedAt || r.requestedAt)}</td><td>${SW_LABEL[r.type] || r.type}</td><td>${legsTxt}</td><td>${st}</td><td>${r.decidedBy || "-"}</td><td class="hint">${note}</td></tr>`;
-  }).join("");
-  document.querySelector("#swap-log tbody").innerHTML = rows || `<tr><td colspan="6" class="hint">ยังไม่มีรายการแลกเวร</td></tr>`;
+  const isAdmin = (typeof CURRENT_ROLE === "undefined") || CURRENT_ROLE === "admin";
+  const STBADGE = {
+    pending: '<span style="color:#b58900;font-weight:600">รออนุมัติ</span>',
+    approved: '<span class="st-ok">อนุมัติแล้ว</span>',
+    rejected: '<span class="st-no">ปฏิเสธ</span>',
+  };
+  const rows = SWAP_REQS
+    .filter(r => r.monthKey === ACTIVE_MK)
+    .sort((a, b) => b.requestedAt - a.requestedAt)
+    .map(r => {
+      const legsTxt = r.legs.map(l => `${l.name} วันที่ ${l.day}: ${slotName(l.from)} → ${slotName(l.newCode)}`).join("<br>");
+      let act = "";
+      if (r.status === "pending" && isAdmin) {
+        act = `<button class="ghost sw-approve" data-id="${r.id}" style="padding:.1rem .5rem;color:var(--ok)">อนุมัติ</button>
+               <button class="ghost sw-reject" data-id="${r.id}" style="padding:.1rem .5rem;color:var(--alert)">ปฏิเสธ</button>`;
+      } else if (r.decidedBy) {
+        act = `<span class="hint">${r.decidedBy} · ${r.decidedAt ? fmt(r.decidedAt) : ""}</span>`;
+      } else {
+        act = `<span class="hint">รอหัวหน้าหน่วย</span>`;
+      }
+      return `<tr><td>${fmt(r.requestedAt)}</td><td>${r.requestedBy}</td><td>${legsTxt}</td><td class="hint">${r.reason || "–"}</td><td>${STBADGE[r.status] || r.status}</td><td style="white-space:nowrap">${act}</td></tr>`;
+    }).join("");
+  tbody.innerHTML = rows || `<tr><td colspan="6" class="hint">ยังไม่มีคำขอแลกเวรเดือนนี้</td></tr>`;
+  tbody.querySelectorAll(".sw-approve").forEach(b => b.addEventListener("click", () => decideSwapReq(b.dataset.id, "approved")));
+  tbody.querySelectorAll(".sw-reject").forEach(b => b.addEventListener("click", () => decideSwapReq(b.dataset.id, "rejected")));
 }
+// admin อนุมัติ/ปฏิเสธ — อัปเดตสถานะเท่านั้น ไม่แตะตาราง (admin แก้ตารางเองที่หน้าตารางเวร)
+function decideSwapReq(id, status) {
+  if (typeof CURRENT_ROLE !== "undefined" && CURRENT_ROLE !== "admin") { toast("เฉพาะหัวหน้าหน่วย (admin) เท่านั้น"); return; }
+  const r = SWAP_REQS.find(x => x.id === id); if (!r) return;
+  r.status = status;
+  r.decidedBy = (typeof CURRENT_UNIT !== "undefined" && CURRENT_UNIT) ? "หัวหน้าหน่วย" : "admin";
+  r.decidedAt = Date.now();
+  persistSwapReqs(); persist();
+  renderSwapReqs();
+  if (status === "approved") toast("อนุมัติคำขอแล้ว — แก้ไขตารางเวรด้วยตนเองที่หน้า “ตารางเวร”");
+  else toast("ปฏิเสธคำขอแล้ว");
+}
+// ชื่อเดิม renderSwapLog ยังถูกเรียกจากที่อื่น → ชี้ไปที่ renderSwapReqs
+function renderSwapLog() { renderSwapReqs(); }
 
 /* ---------------- history (ประวัติเวร) ---------------- */
 function renderHistWho() {
@@ -5762,6 +5850,7 @@ document.getElementById("staff-form").addEventListener("submit", e => {
 let CURRENT_ROLE = "admin";
 let SB_ADAPTER = null;      // SupabaseAdapter เมื่อเชื่อม cloud (ประกาศไว้ก่อนกัน TDZ)
 let CURRENT_UNIT = null;
+let CURRENT_STAFF = null;   // ชื่อ staff ที่ผูกกับ user (สำหรับขอเวร/แลกเวรเฉพาะตนเอง — เตรียมไว้)
 function applyRole(role) {
   CURRENT_ROLE = role;
   document.body.classList.toggle("role-user", role === "user");
@@ -5771,7 +5860,8 @@ function applyRole(role) {
   // ถ้า user อยู่ที่ tab admin-only ให้เด้งไป tab ตารางเวร
   const cur = document.querySelector('[role="tab"][aria-selected="true"]');
   if (role === "user" && cur && cur.hasAttribute("data-admin-only")) selectTab(document.getElementById("t-grid"));
-  // re-render ตาราง เพื่อให้ gate การมองเห็นของ user (เห็นเฉพาะเดือนที่เผยแพร่) มีผลทันที
+  // re-render ตาราง + แถบเลือกเดือนของ user เพื่อให้ gate การมองเห็นมีผลทันที
+  if (typeof renderUserMonthSelector === "function") renderUserMonthSelector();
   if (typeof renderGrid === "function") renderGrid();
 }
 // adapter: localStorage (fallback memory ถ้าไม่มี)
@@ -5791,6 +5881,9 @@ function persist() {
       data.published = Boolean(st.published);
       data.baseline = st.baseline || STORE.baseline || null;
       data.swapLog = st.swapLog || STORE.swapLog || [];
+      // คำขอแลกเวร + คำขอเวร ของเดือนนี้ (เพื่อให้ user/admin เห็นตรงกันข้ามเครื่อง)
+      data.swapReqs = (typeof SWAP_REQS !== "undefined") ? SWAP_REQS.filter(r => r.monthKey === ACTIVE_MK) : [];
+      data.requests = (typeof REQUESTS !== "undefined") ? REQUESTS.filter(r => r.monthKey === ACTIVE_MK) : [];
       SB_ADAPTER.saveMonth(ACTIVE_MK, data).catch(() => {});
     }
   } catch (e) {}
@@ -5819,14 +5912,76 @@ function gsStatus(msg, kind) {
   el.textContent = msg;
   el.style.color = kind === "ok" ? "var(--ok)" : kind === "bad" ? "var(--alert)" : "";
 }
+// Token เริ่มต้น (ตรงกับ var TOKEN ใน Apps Script) — admin ไม่ต้องกรอกเองถ้าใช้ค่านี้
+const GS_DEFAULT_TOKEN = "nurse-schedule-2569-a7k3";
 function gsAdapter() {
   const url = document.getElementById("gs-url").value.trim();
-  const token = document.getElementById("gs-token").value.trim();
+  const token = document.getElementById("gs-token").value.trim() || GS_DEFAULT_TOKEN;
   if (!url) { gsStatus("กรุณาใส่ Web App URL ก่อน", "bad"); return null; }
-  // จำค่าไว้ใน localStorage
-  try { if (typeof localStorage !== "undefined") { localStorage.setItem("nurse:gs-url", url); localStorage.setItem("nurse:gs-token", token); } } catch (e) {}
+  // จำค่าไว้ใน localStorage (รวมอีเมลแจ้งเตือน)
+  try {
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem("nurse:gs-url", url);
+      localStorage.setItem("nurse:gs-token", token);
+      const em = document.getElementById("gs-notify-email");
+      if (em) localStorage.setItem("nurse:gs-notify-email", em.value.trim());
+    }
+  } catch (e) {}
   return new RulesEngine.GoogleSheetsAdapter(url, { token });
 }
+// บันทึกอีเมลแจ้งเตือนทันทีที่ admin แก้ (ไม่ต้องกดปุ่มอื่น)
+document.getElementById("gs-notify-email")?.addEventListener("change", () => {
+  try { if (typeof localStorage !== "undefined") localStorage.setItem("nurse:gs-notify-email", document.getElementById("gs-notify-email").value.trim()); } catch (e) {}
+});
+
+// อ่านค่า config Google Sheets (ใช้ตอนยิงแจ้งเตือน) — คืน null ถ้ายังไม่ตั้ง URL
+function gsConfig() {
+  const g = (id, k) => {
+    const el = document.getElementById(id);
+    const v = el ? el.value.trim() : "";
+    return v || (typeof localStorage !== "undefined" ? (localStorage.getItem(k) || "") : "");
+  };
+  const url = g("gs-url", "nurse:gs-url");
+  if (!url) return null;
+  return { url, token: g("gs-token", "nurse:gs-token") || GS_DEFAULT_TOKEN, notifyEmail: g("gs-notify-email", "nurse:gs-notify-email") };
+}
+
+// ยิงแจ้งเตือนคำขอแลกเวรไปที่ Apps Script Web App (ส่งแล้วไม่รอผล — no-cors)
+// เงียบถ้ายังไม่ได้ตั้งค่า Google Sheets / อีเมล (ไม่กระทบการส่งคำขอ)
+async function notifySwapRequest(req) {
+  const cfg = gsConfig();
+  if (!cfg || !cfg.notifyEmail) return; // ยังไม่ตั้ง URL หรืออีเมล → ข้าม
+  const detail = (req.legs || []).map(l => `${l.name} วันที่ ${l.day}: ${slotName(l.from)} → ${slotName(l.newCode)}`).join(" | ");
+  const payload = {
+    token: cfg.token,
+    action: "notify",
+    payload: {
+      kind: "swap",
+      unit: (typeof CURRENT_UNIT !== "undefined" && CURRENT_UNIT) ? CURRENT_UNIT.name : "",
+      requestedBy: req.requestedBy || "",
+      monthKey: req.monthKey || "",
+      detail,
+      reason: req.reason || "",
+      notifyEmail: cfg.notifyEmail,
+      appUrl: (typeof location !== "undefined") ? location.href : "",
+    },
+  };
+  try {
+    await fetch(cfg.url, {
+      method: "POST", mode: "no-cors",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify(payload),
+    });
+  } catch (e) { /* เงียบ — การแจ้งเตือนล้มเหลวไม่กระทบการส่งคำขอ */ }
+}
+document.getElementById("gs-test-notify")?.addEventListener("click", async () => {
+  const cfg = gsConfig();
+  if (!cfg) { gsStatus("ใส่ Web App URL ก่อน", "bad"); return; }
+  if (!cfg.notifyEmail) { gsStatus("ใส่อีเมลรับแจ้งเตือนก่อน", "bad"); return; }
+  gsStatus("กำลังส่งอีเมลทดสอบ...", "");
+  await notifySwapRequest({ legs: [{ name: "ทดสอบ", day: 1, from: "ช", newCode: "บ" }], requestedBy: "ระบบ (ทดสอบ)", monthKey: ACTIVE_MK, reason: "ทดสอบการแจ้งเตือน" });
+  gsStatus("ส่งคำสั่งแจ้งเตือนแล้ว — ตรวจอีเมล " + cfg.notifyEmail + " (อาจอยู่ใน Spam ครั้งแรก)", "ok");
+});
 document.getElementById("gs-test").addEventListener("click", async () => {
   const a = gsAdapter(); if (!a) return;
   gsStatus("กำลังทดสอบ...", "");
@@ -5866,8 +6021,11 @@ document.getElementById("gs-pull").addEventListener("click", async () => {
   try {
     if (typeof localStorage === "undefined") return;
     const u = localStorage.getItem("nurse:gs-url"), t = localStorage.getItem("nurse:gs-token");
+    const em = localStorage.getItem("nurse:gs-notify-email");
     if (u) document.getElementById("gs-url").value = u;
-    if (t) document.getElementById("gs-token").value = t;
+    // Token: ใช้ค่าที่เคยบันทึก หรือค่าเริ่มต้น (ตรงกับ Apps Script) — admin ไม่ต้องกรอกเอง
+    document.getElementById("gs-token").value = t || GS_DEFAULT_TOKEN;
+    if (em && document.getElementById("gs-notify-email")) document.getElementById("gs-notify-email").value = em;
     if (u) gsStatus("ตั้งค่า URL แล้ว — กดทดสอบการเชื่อมต่อ", "");
   } catch (e) {}
 })();
@@ -6031,12 +6189,23 @@ async function loadFromCloud() {
       grid, baseline: d.baseline || null, published: Boolean(d.published),
       swapLog: d.swapLog || [], seeded: true,
     };
+    // รวมคำขอแลกเวร + คำขอเวรของเดือนนี้จาก cloud
+    if (Array.isArray(d.swapReqs)) for (const r of d.swapReqs) if (!SWAP_REQS.some(x => x.id === r.id)) SWAP_REQS.push(r);
+    if (Array.isArray(d.requests)) for (const r of d.requests) if (!REQUESTS.some(x => x.id === r.id)) REQUESTS.push(r);
   }
 
-  // 3) ตั้งเดือนที่แสดง: เดือนแรกที่มีข้อมูล หรือเดือนปัจจุบันจริงถ้ายังว่าง
+  // 3) ตั้งเดือนที่แสดง:
+  //    - user: เดือนที่ "เผยแพร่แล้ว" ล่าสุด (ไม่ค้างเดือนเก่า/เดือนที่ยังไม่เผยแพร่)
+  //    - admin: เดือนล่าสุดที่มีข้อมูล · ถ้ายังว่างใช้เดือนปัจจุบันจริง
   const now = new Date();
   const curMK = mkOf(now.getFullYear(), now.getMonth());
-  const target = monthKeys[0] || curMK;
+  const publishedKeys = monthKeys.filter(mk => all[mk] && all[mk].published);
+  let target;
+  if (typeof CURRENT_ROLE !== "undefined" && CURRENT_ROLE === "user") {
+    target = publishedKeys[publishedKeys.length - 1] || monthKeys[monthKeys.length - 1] || curMK;
+  } else {
+    target = monthKeys[monthKeys.length - 1] || curMK;
+  }
   ensureMonth(target);
   try { renderMonthSelector(); } catch (e) { console.error(e); }
   try { activateMonth(target, { rerender: true }); } catch (e) { console.error("activateMonth:", e); }
@@ -6056,6 +6225,7 @@ function clearDemoState() {
   if (typeof OFF_REQ !== "undefined") OFF_REQ.length = 0;
   if (typeof WORK_REQ !== "undefined") WORK_REQ.length = 0;
   if (typeof REQUESTS !== "undefined" && Array.isArray(REQUESTS)) REQUESTS.length = 0;
+  if (typeof SWAP_REQS !== "undefined" && Array.isArray(SWAP_REQS)) SWAP_REQS.length = 0;
   if (typeof ASSIGNMENTS !== "undefined" && Array.isArray(ASSIGNMENTS)) ASSIGNMENTS.length = 0;
   // ล้าง localStorage ที่ค้าง demo (ของเดือน 2026-03 เดิม) เพื่อไม่ให้ restore() ดึงกลับมา
   try {
@@ -6148,6 +6318,7 @@ document.getElementById("cp-submit")?.addEventListener("click", async ()=>{
 if (restore()) { /* โหลดข้อมูลเดิมจาก localStorage (demo) */ }
 restoreAsg();
 restoreReq();
+restoreSwapReqs();
 seedRequestsFromLegacy();
 syncLegacyFromRequests();
 // --- ตั้งค่า multi-month registry ---
